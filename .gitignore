@@ -1,0 +1,23 @@
+# Build outputs (only if you compile in place)
+*.obj
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.exe
+
+# Created by install_overlay.ps1 (never commit)
+.install_state
+backup/
+
+# Capture / editing scratch (dev only)
+*.mkv
+*.raw
+*.log
+*.tmp
+take*/
+
+# OS noise
+Thumbs.db
+[Dd]esktop.ini
+.DS_Store

@@ -1,0 +1,8 @@
+LIBRARY version
+EXPORTS
+    GetFileVersionInfoSizeA = ov_GetFileVersionInfoSizeA @1
+    GetFileVersionInfoSizeW = ov_GetFileVersionInfoSizeW @2
+    GetFileVersionInfoA     = ov_GetFileVersionInfoA     @3
+    GetFileVersionInfoW     = ov_GetFileVersionInfoW     @4
+    VerQueryValueA         = ov_VerQueryValueA         @5
+    VerQueryValueW         = ov_VerQueryValueW         @6
