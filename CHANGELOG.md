@@ -208,6 +208,24 @@ release notes inside its README.
   1.2.0. Offline smoke test 11/11 (patcher round-trip + guards + all precedence
   paths). `content-mods/README.md` records "externalise the numbers" as a rule
   for future mods.
+- **`content-mods/` + `overlay/` M8 — edit bag sizes in-game (F8).** The native
+  `version.dll` overlay grows a hidden, key-toggled editor panel for the bag
+  config, so you can retune sizes while playing instead of alt-tabbing to a text
+  editor. **F8** shows/hides it; `←/→` pick a bag, `↑/↓` change the value
+  (`Shift` ×10), `Enter` saves, `Esc` closes. On Save the overlay writes the four
+  sizes into the canonical `%LOCALAPPDATA%\LeafItAloneSafe\bag-capacity.json`
+  (as `mode: "sizes"`) and launches the new `apply-on-exit.ps1`, which waits for
+  the game to close and then runs `apply.ps1` — so in-game edits are live next
+  launch. This respects the IL2CPP constraint (encrypted metadata → no managed
+  in-process code; the bundle is locked while the game runs), so it is save-and-
+  re-patch-on-exit, never live memory hacking. Config is now a single canonical
+  live file seeded from the repo template on first `apply.ps1`; that seed (and a
+  top-up on older configs) writes an absolute `_applyHelper` path into the JSON so
+  the overlay can find the helper even when the repo and the game are on
+  **different drives** — every overlay path is now built absolute from
+  `%LOCALAPPDATA%`, not DLL-relative. `[bageditor]` added to `LeafOverlay.ini`
+  (`ToggleKey`/`Min`/`Max`/`Step`/`StepBig`). Rebuilt `version.dll` (MSVC, clean);
+  offline JSON round-trip (seed + overlay-saved config) verified.
 
 ## 1.0.0
 Initial release: the `overlay/` example.

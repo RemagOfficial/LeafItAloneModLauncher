@@ -3,11 +3,14 @@
 # bundle with UnityPy, through the safe-base SDK so the change is gated on the
 # safety framework, backed up, and reversible.
 #
-# Sizes come from bag-capacity.json (a multiplier OR explicit per-bag sizes);
-# -Scale or -Small/-Medium/-Big/-Giant on the command line override the config.
+# Sizes come from the canonical config
+# %LOCALAPPDATA%\LeafItAloneSafe\bag-capacity.json (a multiplier OR explicit
+# per-bag sizes), seeded from the repo bag-capacity.json template on first run -
+# this is also the file the in-game editor (F8) writes. -Scale or
+# -Small/-Medium/-Big/-Giant on the command line override it for one run.
 # Re-running apply.ps1 after editing the config reverts to vanilla first, then
-# re-patches from the pristine backups, so tweaking values is just: edit JSON,
-# run apply.ps1, relaunch.
+# re-patches from the pristine backups, so tweaking values is just: edit JSON
+# (or use the in-game editor), then relaunch.
 #
 # This game loads bundles through Unity Addressables, which CRC-verifies every
 # bundle against catalog.bin and silently hangs on a mismatch. So the mod also
@@ -32,7 +35,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$Config = (Join-Path $PSScriptRoot 'bag-capacity.json'),  # multiplier or per-bag sizes
+    [string]$Config,                          # canonical = %LOCALAPPDATA%\LeafItAloneSafe\bag-capacity.json (seeded from the repo template); pass to override
     [double]$Scale = 0,                         # >0 overrides the config (multiplier vs vanilla 50/200/500/800)
     [int]$Small = 0, [int]$Medium = 0, [int]$Big = 0, [int]$Giant = 0, # >0 override config sizes (give all four)
     [string]$BundlePath,                       # override auto-detected bundle
@@ -106,7 +109,49 @@ elseif ($Scale -gt 0) {
     }
     $sizeSource = "command line -Scale $Scale"
 }
-elseif (Test-Path -LiteralPath $Config) {
+else {
+    # No explicit sizes / -Scale given: read the config. The canonical file is
+    # %LOCALAPPDATA%\LeafItAloneSafe\bag-capacity.json (the same one the in-game
+    # editor writes); it is seeded from the repo template on first run so there
+    # is exactly one place to edit. Pass -Config to point somewhere else.
+    if (-not $Config) {
+        $liveCfg = Join-Path $env:LOCALAPPDATA 'LeafItAloneSafe\bag-capacity.json'
+        $repoCfg = Join-Path $PSScriptRoot 'bag-capacity.json'
+        $helper  = Join-Path $PSScriptRoot 'apply-on-exit.ps1'
+        if (-not (Test-Path -LiteralPath $liveCfg)) {
+            New-Item -Path (Split-Path -Parent $liveCfg) -ItemType Directory -Force | Out-Null
+            if (Test-Path -LiteralPath $repoCfg) {
+                $seed = Get-Content -LiteralPath $repoCfg -Raw | ConvertFrom-Json
+            } else {
+                $seed = [pscustomobject]@{ mode = 'multiplier'; multiplier = 2.0 }
+            }
+            # Absolute path to the auto-apply helper. The in-game editor (F8)
+            # reads it from here so it can re-patch on game exit even when the
+            # repo and the game live on different drives (it can't be derived
+            # from the DLL location).
+            $seed | Add-Member -Force NoteProperty _applyHelper $helper
+            $seed | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $liveCfg -Encoding UTF8
+            Write-Host "seeded the live config at $liveCfg" -ForegroundColor DarkGray
+        }
+        else {
+            # A live config from before the in-game editor may predate the helper
+            # field - top it up (keeping the user's mode/values) so auto-apply
+            # works on the very next editing session.
+            try {
+                $cur = Get-Content -LiteralPath $liveCfg -Raw | ConvertFrom-Json
+                if (-not $cur._applyHelper) {
+                    $cur | Add-Member -Force NoteProperty _applyHelper $helper
+                    $cur | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $liveCfg -Encoding UTF8
+                    Write-Host "added the auto-apply helper path to $liveCfg" -ForegroundColor DarkGray
+                }
+            } catch { Write-Warning "couldn't refresh helper path in $liveCfg (non-fatal): $($_.Exception.Message)" }
+        }
+        $Config = $liveCfg
+    }
+    if (-not (Test-Path -LiteralPath $Config)) {
+        Write-Error "no config at $Config and no -Scale/-Small.. given. Edit bag-capacity.json, or pass -Scale / -Small.. values."
+        exit 7
+    }
     $cfg = Get-Content -LiteralPath $Config -Raw | ConvertFrom-Json
     if ($cfg.mode -eq 'sizes') {
         $s = $cfg.sizes
@@ -127,10 +172,6 @@ elseif (Test-Path -LiteralPath $Config) {
         }
         $sizeSource = "config $Config (mode 'multiplier' x$mult)"
     }
-}
-else {
-    Write-Error "no config at $Config and no -Scale/-Small.. given. Edit bag-capacity.json, or pass -Scale / -Small.. values."
-    exit 7
 }
 
 # 4. if it's already applied, revert to vanilla first, then re-patch from the

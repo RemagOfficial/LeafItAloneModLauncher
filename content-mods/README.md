@@ -107,11 +107,24 @@ Revert-Mod -Name "bag-capacity"     # restores byte-identical original + unregis
   bundles. Only `patch.py` and the scripts are published.
 - **Externalise the numbers.** Each mod reads a `<mod>.json` config (a
   multiplier and/or explicit per-field values) so balancing needs no code edit.
-  `apply.ps1` computes the targets from *CLI override → config*, and if the mod
-  is already applied it calls `Revert-Mod` first, so **edit config → `apply.ps1`
-  → relaunch** iterates cleanly with no stacking (see
+  There is one **canonical live config** at
+  `%LOCALAPPDATA%\LeafItAloneSafe\<mod>.json`, seeded from the repo `<mod>.json`
+  template on first `apply.ps1` — that's the single file you (and any editor)
+  edit. `apply.ps1` computes the targets from *CLI override → config*, and if the
+  mod is already applied it calls `Revert-Mod` first, so **edit config →
+  `apply.ps1` → relaunch** iterates cleanly with no stacking (see
   [`bag-capacity/`](bag-capacity/)). Always re-patch from a known vanilla
   baseline (the pristine backup), never from the already-modded live file.
+- **Make configs editable in-game (mod support).** Because managed in-process
+  code is impossible here (encrypted `global-metadata.dat`), the only in-process
+  surface is the native `version.dll` overlay. The overlay can therefore show a
+  hidden, key-toggled editor panel (bag-capacity: **F8**) that reads/writes the
+  same canonical JSON. Saving from in game cannot re-patch the locked bundle
+  immediately, so `apply.ps1` stores an absolute `_applyHelper` path in the
+  config and the overlay launches `<mod>/apply-on-exit.ps1`, which waits for the
+  game to close and re-applies — in-game edits go live next launch. Keep all
+  overlay paths absolute (built from `%LOCALAPPDATA%`), never DLL-relative: the
+  game and the user profile can be on different drives.
 - **Do not** try to disable leaderboards / achievements / Steam within a
   content mod. The base does it. If a mod needs a gameplay-only "no scoring
   this run" flag, use in-game rules (e.g. set `leavesCount = 0` on a test
@@ -121,7 +134,7 @@ Revert-Mod -Name "bag-capacity"     # restores byte-identical original + unregis
 
 | Mod | What it changes | Bundle(s) | Field(s) |
 |---|---|---|---|
-| `bag-capacity/` ✅ **(shipped, M6 + config M7)** | Bigger leaf bags — configurable (multiplier or per-bag) | `coreassets_assets_meta_*` | `capacity` on 4 MonoBehaviours (Small=50, Med=200, Big=500, Giant=800) |
+| `bag-capacity/` ✅ **(shipped, M6 + config M7 + in-game editor M8)** | Bigger leaf bags — configurable (multiplier or per-bag), editable in-game with F8 | `coreassets_assets_meta_*` | `capacity` on 4 MonoBehaviours (Small=50, Med=200, Big=500, Giant=800) |
 | `bag-speed/` | Faster seal & empty | `coreassets_assets_actors_*` | `sealingTime`, `emptyingDuration` on each `*LeafBag` |
 | `more-leaves/` | Denser levels | `coreassets_assets_areas*` | `leavesCount` per area |
 | `instant-seal/` | QoL: no seal delay | same as `bag-speed/` | set `sealingTime = 0.0` |

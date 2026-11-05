@@ -12,8 +12,9 @@ The default doubles every capacity:
 | Giant  | 800 | **1600** |
 
 Fewer trips to the bin, more raking. Change the multiplier or set each bag
-individually in [`bag-capacity.json`](bag-capacity.json) (see
-**Configuration** below) — no code, no re-install.
+individually — edit the config (see **Configuration** below) or just press **F8
+in-game** and adjust the sizes while you play (see **Edit sizes in-game**) —
+no code, no re-install.
 
 ## What it actually changes
 
@@ -79,8 +80,16 @@ cd content-mods\bag-capacity
 
 ## Configuration
 
-Sizes come from **[`bag-capacity.json`](bag-capacity.json)** next to `apply.ps1`.
-Two modes:
+Sizes come from one **canonical config file**:
+
+```
+%LOCALAPPDATA%\LeafItAloneSafe\bag-capacity.json
+```
+
+The first time you run `apply.ps1` it seeds that file from the
+[`bag-capacity.json`](bag-capacity.json) template next to the script, so there is
+exactly one place to edit from then on (the repo copy is just the starting
+template). Two modes:
 
 ```jsonc
 // A. multiplier — scales the vanilla 50/200/500/800
@@ -91,10 +100,11 @@ Two modes:
   "sizes": { "small": 100, "medium": 500, "big": 1200, "giant": 3000 } }
 ```
 
-To change sizes: **edit the JSON, then run `apply.ps1` again.** It notices the
-mod is already applied, reverts to vanilla first, re-patches from the pristine
-backup with your new numbers, and re-registers — so iterating is just *edit →
-apply → relaunch*. Nothing is ever stacked.
+To change sizes by hand: **edit that JSON, then run `apply.ps1` again.** It
+notices the mod is already applied, reverts to vanilla first, re-patches from the
+pristine backup with your new numbers, and re-registers — so iterating is just
+*edit → apply → relaunch*. Nothing is ever stacked. (Or skip the file edit and
+[change them in-game with F8](#edit-sizes-in-game-f8).)
 
 Command-line flags override the config for a one-off without editing the file:
 
@@ -105,6 +115,38 @@ Command-line flags override the config for a one-off without editing the file:
 ```
 
 Precedence: explicit `-Small/-Medium/-Big/-Giant` > `-Scale` > the config file.
+
+## Edit sizes in-game (F8)
+
+Because you own the config file, the safe-base overlay can edit it **while you
+play** — no alt-tab, no text editor. Press **F8** in game to open the bag-size
+panel (hidden by default; F8 also closes it):
+
+| Key | Action |
+|---|---|
+| `←` / `→` | pick which bag (Small / Medium / Big / Giant) |
+| `↑` / `↓` | raise / lower that bag's value (`Shift` steps ×10) |
+| `Enter` | save the config **and** queue the change |
+| `Esc`   | close the panel |
+
+On `Enter` the overlay writes your four sizes into the canonical config (switching
+it to `mode: "sizes"`) and launches `apply-on-exit.ps1`. That helper just waits
+for you to **close the game**, then runs `apply.ps1` for you — so your new sizes
+are ready the next time you launch. You never have to touch a file or a terminal.
+
+This is deliberately *not* live memory hacking. The game runs IL2CPP with an
+encrypted `global-metadata.dat`, so no managed code (BepInEx/MelonLoader/Harmony)
+can run in-process; the only in-process piece is the native `version.dll` overlay,
+and the bundle it edits is locked while the game is running. Saving to the config
+and re-patching cleanly on exit is the safe way to make "edit in-game → ready next
+play" work. Auto-apply is optional: if you'd rather control it, ignore the helper
+and run `apply.ps1` yourself before your next session.
+
+The panel, its key and its clamps are configured in the game folder's
+`LeafOverlay.ini` under `[bageditor]` (`ToggleKey`, `MinValue`, `MaxValue`,
+`Step`, `StepBig`). The config path is always the `%LOCALAPPDATA%` file above —
+an absolute path, so it works even when the game is installed on a different
+drive than your Windows profile.
 
 ## Uninstall
 
@@ -154,8 +196,9 @@ C:\Python312\python.exe patch_bag_capacity.py --verify-only `
 
 | File | Role |
 |---|---|
-| `bag-capacity.json` | the config: a multiplier or explicit per-bag sizes (edit this, not code) |
+| `bag-capacity.json` | the config **template** (a multiplier or explicit per-bag sizes); seeded into `%LOCALAPPDATA%\LeafItAloneSafe\bag-capacity.json` on first apply — that live copy is what you and the F8 editor edit |
 | `apply.ps1`   | installer: safety asserts → resolve sizes → (revert if already applied) → stage → backup bundle+catalog → null catalog CRC → apply → verify → register |
+| `apply-on-exit.ps1` | tiny waiter the F8 editor launches on Save: blocks until the game closes, then runs `apply.ps1` so in-game edits are live next launch |
 | `revert.ps1`  | undo via the safe-base registry (byte-identical restore of both files) |
 | `patch_bag_capacity.py` | the UnityPy editor (explicit sizes or scale; self-verifying, refuses non-vanilla input) |
 | `patch_catalog.py` | nulls this bundle's CRC in `aa/catalog.bin` (guarded: unique match + adjacent size) |

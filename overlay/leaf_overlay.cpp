@@ -108,6 +108,38 @@ static bool      g_sbRanChecks        = false;
 static bool      g_sbOk               = true;
 static wchar_t   g_sbFailSummary[320] = L"";          // compact one-liner for banner fallback
 
+// ---- bag-capacity in-game editor (M8) ----
+// A keybind-hidden panel that edits the bag-capacity live config
+// (%LOCALAPPDATA%\LeafItAloneSafe\bag-capacity.json) from inside the game, then
+// spawns apply-on-exit.ps1 so the change is applied the next time the game is
+// launched. It only reads/writes a small JSON text file next to our OWN
+// version.dll - it never touches game memory or the encrypted metadata, so the
+// "no managed code" limit is respected. Lives entirely in safe-base mode.
+static bool      g_beEnabled   = true;
+static int       g_beToggleVk  = VK_F8;
+static wchar_t   g_beToggleName[16] = L"F8";
+static int       g_beMargin    = 14;      // panel offset from the top-right corner
+static int       g_beMin       = 1;
+static int       g_beMax       = 1000000;
+static int       g_beStep      = 10;      // up/down increment
+static int       g_beStepBig   = 100;     // with Shift held
+// Optional ABSOLUTE override for the config path; empty -> %LOCALAPPDATA%\
+// LeafItAloneSafe\bag-capacity.json (built at runtime, so it works even when the
+// game and the user profile are on different drives).
+static wchar_t   g_beCfgPath[520] = L"";
+// Runtime state.
+static bool      g_beVisible   = false;   // hidden by default
+static bool      g_bePrevToggle= false;
+static bool      g_bePrev[5]   = {false,false,false,false,false}; // L R U D Enter
+static int       g_beSel       = 0;       // 0..3 selected bag
+static int       g_beVal[4]    = {50,200,500,800};   // current (effective) sizes
+static bool      g_beLoaded    = false;   // config file found at startup
+static bool      g_beSpawned   = false;   // helper launched this session
+static ULONGLONG g_beStatusMs  = 0;
+static wchar_t   g_beStatus[160] = L"";
+static wchar_t   g_beHelper[520] = L"";   // absolute apply-on-exit.ps1 path, read from the config
+
+
 // Unique color key: every pixel painted this color becomes fully transparent,
 // so the game shows through everywhere except our HUD panel.
 static const COLORREF kColorKey = RGB(255, 0, 255);
@@ -207,6 +239,27 @@ static void LoadConfig() {
     if (g_safebase) OLog("safebase enabled: banner=%d corner=%d margin=%d expProxySize=%llu checks[proxy=%d saves=%d outbound=%d]",
         g_sbBanner, g_sbBannerCorner, g_sbBannerMargin, g_sbExpectedProxySize,
         g_sbCheckProxy, g_sbCheckSaves, g_sbCheckOutbound);
+
+    // ---- [bageditor] section: M8 in-game bag-capacity editor ----
+    GetPrivateProfileStringW(L"bageditor", L"Enabled", L"true", buf, 128, ini);
+    g_beEnabled = ParseBool(buf, true);
+    GetPrivateProfileStringW(L"bageditor", L"ToggleKey", L"F8", buf, 128, ini);
+    int bev = ParseKey(buf); if (bev) { g_beToggleVk = bev; lstrcpynW(g_beToggleName, buf, 16); }
+    g_beMargin  = GetPrivateProfileIntW(L"bageditor", L"Margin", 14, ini);
+    g_beMin     = GetPrivateProfileIntW(L"bageditor", L"MinValue", 1, ini);
+    g_beMax     = GetPrivateProfileIntW(L"bageditor", L"MaxValue", 1000000, ini);
+    g_beStep    = GetPrivateProfileIntW(L"bageditor", L"Step", 10, ini);
+    g_beStepBig = GetPrivateProfileIntW(L"bageditor", L"StepBig", 100, ini);
+    if (g_beStep < 1) g_beStep = 1;
+    if (g_beStepBig < g_beStep) g_beStepBig = g_beStep;
+    if (g_beMax < g_beMin) g_beMax = g_beMin;
+    // Optional ABSOLUTE override only. Left blank (the safe-base default) the
+    // editor uses %LOCALAPPDATA%\LeafItAloneSafe\bag-capacity.json, built at
+    // runtime - correct even when the game and the user profile are on
+    // different drives, which a DLL-relative path would not be.
+    GetPrivateProfileStringW(L"bageditor", L"ConfigPath", L"", g_beCfgPath, 520, ini);
+    if (g_beEnabled) OLog("bageditor enabled: key=%ls cfgOverride='%ls' min=%d max=%d step=%d/%d",
+        g_beToggleName, g_beCfgPath, g_beMin, g_beMax, g_beStep, g_beStepBig);
 }
 
 // ---------------------------------------------------------------------------
@@ -515,6 +568,268 @@ static void RunPreconditions() {
 }
 
 // ---------------------------------------------------------------------------
+// bag-capacity in-game editor (M8). Helpers, then the panel draw.
+// ---------------------------------------------------------------------------
+static const wchar_t* kBeLabels[4] = { L"Small", L"Medium", L"Big", L"Giant" };
+static const int      kBeVanilla[4]= { 50, 200, 500, 800 };
+
+// Config path: an absolute override from the ini, else %LOCALAPPDATA%\
+// LeafItAloneSafe\bag-capacity.json (correct even if the game lives on another
+// drive than the user profile - a DLL-relative path would not be).
+static void BeCfgPath(wchar_t* out, size_t cap) {
+    if (g_beCfgPath[0]) {                       // absolute override
+        if (GetFullPathNameW(g_beCfgPath, (DWORD)cap, out, nullptr)) return;
+        lstrcpynW(out, g_beCfgPath, (int)cap); return;
+    }
+    wchar_t base[MAX_PATH];
+    DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", base, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) {              // fall back to USERPROFILE
+        if (GetEnvironmentVariableW(L"USERPROFILE", base, MAX_PATH) == 0) { out[0] = 0; return; }
+        wchar_t tmp[MAX_PATH * 2];
+        _snwprintf_s(tmp, _countof(tmp), _TRUNCATE, L"%s\\AppData\\Local", base);
+        lstrcpynW(base, tmp, MAX_PATH);
+    }
+    _snwprintf_s(out, cap, _TRUNCATE, L"%s\\LeafItAloneSafe\\bag-capacity.json", base);
+}
+
+// Very small scanner: find "<key>"  :  <integer> in a flat-ish JSON text. The
+// config we read/write is machine-generated and simple, so a real parser is
+// overkill. Returns false if the key isn't present.
+static bool BeFindInt(const char* j, const char* key, int* out) {
+    const char* p = strstr(j, key);
+    if (!p) return false;
+    p += strlen(key);
+    while (*p && *p != ':') ++p;
+    if (*p != ':') return false;
+    ++p;
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') ++p;
+    char* end = nullptr;
+    long v = strtol(p, &end, 10);
+    if (end == p) return false;
+    *out = (int)v;
+    return true;
+}
+
+// Read the first quoted token after "<key>" : . Bounded, so "mode":"multiplier"
+// isn't confused by a later "sizes" object key.
+static bool BeFindString(const char* j, const char* key, char* out, int cap) {
+    const char* p = strstr(j, key);
+    if (!p) return false;
+    p += strlen(key);
+    while (*p && *p != ':') ++p;
+    if (*p != ':') return false;
+    ++p;
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') ++p;
+    if (*p != '"') return false;
+    ++p;
+    int k = 0;
+    while (*p && *p != '"' && k < cap - 1) {
+        // unescape the JSON string escapes we may emit ("\\" -> "\", "\"" -> "\"")
+        if (*p == '\\' && (p[1] == '\\' || p[1] == '"')) { out[k++] = p[1]; p += 2; continue; }
+        out[k++] = *p++;
+    }
+    out[k] = 0;
+    return true;
+}
+
+static void BeClamp() {
+    for (int i = 0; i < 4; ++i) {
+        if (g_beVal[i] < g_beMin) g_beVal[i] = g_beMin;
+        if (g_beVal[i] > g_beMax) g_beVal[i] = g_beMax;
+    }
+}
+
+// Read the live config into g_beVal. mode=sizes -> the four explicit values;
+// mode=multiplier -> vanilla x multiplier. Returns false if no file.
+static bool BeLoadConfig() {
+    wchar_t full[MAX_PATH * 2]; BeCfgPath(full, _countof(full));
+    FILE* f = _wfopen(full, L"rb");
+    if (!f) { OLog("bageditor: no config at %ls (showing vanilla)", full); g_beLoaded = false; return false; }
+    char buf[4096]; size_t n = fread(buf, 1, sizeof(buf) - 1, f); fclose(f);
+    buf[n] = 0;
+
+    // Carry the absolute apply-on-exit.ps1 path apply.ps1 wrote into the config.
+    // It can't be derived from the DLL location (repo and game may be on
+    // different drives), so the config is its source of truth.
+    char helperA[520] = {0};
+    if (BeFindString(buf, "\"_applyHelper\"", helperA, 520)) {
+        MultiByteToWideChar(CP_UTF8, 0, helperA, -1, g_beHelper, 520);
+        OLog("bageditor: helper = %ls", g_beHelper);
+    } else {
+        g_beHelper[0] = 0;
+    }
+
+    char mode[16] = {0};
+    BeFindString(buf, "\"mode\"", mode, 16);
+    bool haveFour = BeFindInt(buf, "\"small\"",  &g_beVal[0])
+                 && BeFindInt(buf, "\"medium\"", &g_beVal[1])
+                 && BeFindInt(buf, "\"big\"",    &g_beVal[2])
+                 && BeFindInt(buf, "\"giant\"",  &g_beVal[3]);
+
+    if (_stricmp(mode, "sizes") == 0 && haveFour) {
+        // explicit per-bag values already read into g_beVal
+    } else {
+        // multiplier mode (or unknown): expand vanilla x multiplier.
+        float m = 1.0f;
+        const char* p = strstr(buf, "\"multiplier\"");
+        if (p) {
+            p += 12;
+            while (*p && *p != ':') ++p;
+            if (*p == ':') {
+                ++p;
+                while (*p == ' ' || *p == '\t') ++p;
+                m = (float)atof(p);
+            }
+        }
+        if (m <= 0.0f) m = 1.0f;
+        for (int i = 0; i < 4; ++i) g_beVal[i] = (int)(kBeVanilla[i] * m + 0.5f);
+        // No multiplier at all but we do have four values -> use them.
+        if (!p && haveFour) { /* g_beVal already holds the four */ }
+    }
+    BeClamp();
+    g_beLoaded = true;
+    OLog("bageditor: loaded sizes %d/%d/%d/%d (mode '%s')", g_beVal[0], g_beVal[1], g_beVal[2], g_beVal[3], mode);
+    return true;
+}
+
+// Write the four values as mode=sizes (atomic temp+rename).
+static bool BeSaveConfig() {
+    wchar_t full[MAX_PATH * 2]; BeCfgPath(full, _countof(full));
+    wchar_t tmp[MAX_PATH * 2];
+    _snwprintf_s(tmp, _countof(tmp), _TRUNCATE, L"%s.safebase-tmp", full);
+    FILE* f = _wfopen(tmp, L"wb");
+    if (!f) { OLog("bageditor: cannot open temp %ls gle=%lu", tmp, GetLastError()); return false; }
+    // Re-emit the helper path (escaped for JSON) so the auto-apply helper
+    // survives an in-game save; without it the next edit couldn't self-apply.
+    char helperEsc[1040] = {0};
+    if (g_beHelper[0]) {
+        char hA[520] = {0};
+        WideCharToMultiByte(CP_UTF8, 0, g_beHelper, -1, hA, 520, nullptr, nullptr);
+        int k = 0;
+        for (int i = 0; hA[i] && k < 1030; ++i) {
+            if (hA[i] == '\\') helperEsc[k++] = '\\';
+            helperEsc[k++] = hA[i];
+        }
+        helperEsc[k] = 0;
+    }
+    fprintf(f,
+        "{\n  \"mode\": \"sizes\",\n  \"sizes\": {\n"
+        "    \"small\":  %d,\n    \"medium\": %d,\n"
+        "    \"big\":    %d,\n    \"giant\":  %d\n"
+        "  },\n  \"_source\": \"in-game editor\"",
+        g_beVal[0], g_beVal[1], g_beVal[2], g_beVal[3]);
+    if (helperEsc[0]) fprintf(f, ",\n  \"_applyHelper\": \"%s\"", helperEsc);
+    fprintf(f, "\n}\n");
+    fclose(f);
+    DeleteFileW(full);
+    if (!MoveFileExW(tmp, full, MOVEFILE_REPLACE_EXISTING)) {
+        OLog("bageditor: rename failed gle=%lu", GetLastError());
+        return false;
+    }
+    OLog("bageditor: saved sizes %d/%d/%d/%d", g_beVal[0], g_beVal[1], g_beVal[2], g_beVal[3]);
+    return true;
+}
+
+// Launch the apply-on-exit.ps1 helper (its absolute path came from the config's
+// _applyHelper, set by apply.ps1) so the change re-patches when the game closes.
+// We can't derive it from the DLL location: the repo and the game may live on
+// different drives, so a path relative to the game folder would be wrong.
+static void BeSpawnHelper() {
+    wchar_t full[MAX_PATH * 2]; BeCfgPath(full, _countof(full));
+
+    if (!g_beHelper[0] || GetFileAttributesW(g_beHelper) == INVALID_FILE_ATTRIBUTES) {
+        OLog("bageditor: helper not set/not found ('%ls')", g_beHelper);
+        lstrcpynW(g_beStatus, L"Saved. Run apply.ps1 before next play.", 160);
+        g_beStatusMs = GetTickCount64();
+        return;
+    }
+    wchar_t cmd[MAX_PATH * 4];
+    _snwprintf_s(cmd, _countof(cmd), _TRUNCATE,
+        L"powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%s\" -Config \"%s\"",
+        g_beHelper, full);
+    STARTUPINFOW si{}; si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (CreateProcessW(nullptr, cmd, nullptr, nullptr, FALSE,
+                       CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+        OLog("bageditor: helper spawned");
+        lstrcpynW(g_beStatus, L"Saved. Auto-applies when you close the game.", 160);
+    } else {
+        OLog("bageditor: helper spawn failed gle=%lu", GetLastError());
+        lstrcpynW(g_beStatus, L"Saved. Run apply.ps1 before next play.", 160);
+    }
+    g_beStatusMs = GetTickCount64();
+    g_beSpawned  = true;
+}
+
+// Draw the editor panel (top-right). Painted only while g_beVisible.
+static void PaintBagEditor(HWND h, HDC dc) {
+    const int padX = 18, padY = 14, rowH = 24, gap = 4;
+    wchar_t title[64];  swprintf(title, 64, L"Bag sizes  [%ls]", g_beToggleName);
+    wchar_t hint[160];  lstrcpynW(hint,
+        L"\u2190\u2192 bag   \u2191\u2193 value   Shift \u00d710   Enter save   Esc close", 160);
+    wchar_t foot[176];  foot[0] = 0;
+    if (g_beStatus[0])            swprintf(foot, 176, L"%ls", g_beStatus);
+    else if (!g_beLoaded)         lstrcpynW(foot, L"No config yet - vanilla shown. Enter to create.", 176);
+    else                          lstrcpynW(foot, L"Changes auto-apply on game exit.", 176);
+
+    wchar_t row[4][48];
+    for (int i = 0; i < 4; ++i)
+        swprintf(row[i], 48, L"%ls%s %d", kBeLabels[i],
+                 (i == g_beSel) ? L"  > " : L"   ", g_beVal[i]);
+
+    SIZE ts{}, hs{}, fs{}; int contentW = 0;
+    SelectObject(dc, g_fontSmall);
+    GetTextExtentPoint32W(dc, title, (int)wcslen(title), &ts);   if (ts.cx > contentW) contentW = ts.cx;
+    GetTextExtentPoint32W(dc, hint,  (int)wcslen(hint),  &hs);   if (hs.cx > contentW) contentW = hs.cx;
+    if (foot[0]) { GetTextExtentPoint32W(dc, foot, (int)wcslen(foot), &fs); if (fs.cx > contentW) contentW = fs.cx; }
+    for (int i = 0; i < 4; ++i) {
+        SIZE s; GetTextExtentPoint32W(dc, row[i], (int)wcslen(row[i]), &s);
+        if (s.cx > contentW) contentW = s.cx;
+    }
+
+    RECT cr; GetClientRect(h, &cr);
+    int cw = cr.right - cr.left;
+    int panelW = contentW + padX * 2;
+    int panelH = ts.cy + gap + rowH * 4 + gap + hs.cy + (foot[0] ? gap + fs.cy : 0) + padY * 2;
+    int px = cw - panelW - g_beMargin; if (px < 0) px = 0;
+    int py = g_beMargin;
+    RECT panel = { px, py, px + panelW, py + panelH };
+
+    HBRUSH body = CreateSolidBrush(RGB(18, 22, 26));
+    HPEN   edge = CreatePen(PS_SOLID, 2, RGB(120, 200, 130));
+    HBRUSH ob = (HBRUSH)SelectObject(dc, body);
+    HPEN   op = (HPEN)SelectObject(dc, edge);
+    RoundRect(dc, panel.left, panel.top, panel.right, panel.bottom, 22, 22);
+    SelectObject(dc, ob); SelectObject(dc, op);
+    DeleteObject(body); DeleteObject(edge);
+
+    int tx = panel.left + padX;
+    int y  = panel.top + padY;
+    RECT tr = { tx, y, panel.right, panel.bottom };
+    SetTextColor(dc, RGB(240, 246, 240));
+    DrawTextW(dc, title, -1, &tr, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+    y += ts.cy + gap;
+    for (int i = 0; i < 4; ++i) {
+        RECT rr = { tx, y, panel.right, panel.bottom };
+        SetTextColor(dc, (i == g_beSel) ? RGB(182, 255, 59) : RGB(200, 205, 210));
+        DrawTextW(dc, row[i], -1, &rr, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+        y += rowH;
+    }
+    y += gap;
+    RECT hr = { tx, y, panel.right, panel.bottom };
+    SetTextColor(dc, RGB(130, 140, 150));
+    DrawTextW(dc, hint, -1, &hr, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+    y += hs.cy;
+    if (foot[0]) {
+        y += gap;
+        RECT fr = { tx, y, panel.right, panel.bottom };
+        SetTextColor(dc, RGB(150, 205, 155));
+        DrawTextW(dc, foot, -1, &fr, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Painting + following the game window.
 // ---------------------------------------------------------------------------
 static void PaintOverlay(HWND h) {
@@ -573,8 +888,12 @@ static void PaintOverlay(HWND h) {
         DrawTextW(dc, txt, -1, &bp, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
     }
 
-    // safe-base mode is banner-only: no HUD panel, F9 does nothing.
-    if (g_safebase) { EndPaint(h, &ps); return; }
+    // safe-base mode is banner-only (plus the optional bag editor panel): the
+    // HUD panel and F9 are skipped entirely here.
+    if (g_safebase) {
+        if (g_beEnabled && g_beVisible) PaintBagEditor(h, dc);
+        EndPaint(h, &ps); return;
+    }
 
     if (!g_visible) { EndPaint(h, &ps); return; }
 
@@ -712,6 +1031,39 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
                     ShowWindow(g_hwnd, g_visible ? SW_SHOWNA : SW_HIDE);
                 }
                 g_prevToggle = down;
+            }
+            // safe-base mode: the bag-capacity editor (M8). Panel is polled (not
+            // focused), so keys are edge-detected and shared with the game.
+            if (g_safebase && g_beEnabled) {
+                bool t = (GetAsyncKeyState(g_beToggleVk) & 0x8000) != 0;
+                if (t && !g_bePrevToggle) {
+                    g_beVisible = !g_beVisible;
+                    if (g_beVisible) BeLoadConfig();
+                    g_beStatus[0] = 0;
+                    OLog("bageditor toggle -> %s", g_beVisible ? "open" : "closed");
+                }
+                g_bePrevToggle = t;
+
+                if (g_beVisible) {
+                    const int vks[5] = { VK_LEFT, VK_RIGHT, VK_UP, VK_DOWN, VK_RETURN };
+                    bool down[5];
+                    for (int i = 0; i < 5; ++i) down[i] = (GetAsyncKeyState(vks[i] & 0xFF) & 0x8000) != 0;
+                    bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+                    int step = shift ? g_beStepBig : g_beStep;
+
+                    if (down[0] && !g_bePrev[0]) { g_beSel = (g_beSel + 3) % 4; }
+                    if (down[1] && !g_bePrev[1]) { g_beSel = (g_beSel + 1) % 4; }
+                    if (down[2] && !g_bePrev[2]) { g_beVal[g_beSel] += step; BeClamp(); }
+                    if (down[3] && !g_bePrev[3]) { g_beVal[g_beSel] -= step; if (g_beVal[g_beSel] < g_beMin) g_beVal[g_beSel] = g_beMin; BeClamp(); }
+                    if (down[4] && !g_bePrev[4]) {
+                        if (BeSaveConfig()) { swprintf(g_beStatus, 160, L"Saved %d/%d/%d/%d", g_beVal[0], g_beVal[1], g_beVal[2], g_beVal[3]); BeSpawnHelper(); }
+                        else { lstrcpynW(g_beStatus, L"Save failed (see log)", 160); g_beStatusMs = GetTickCount64(); }
+                    }
+                    for (int i = 0; i < 5; ++i) g_bePrev[i] = down[i];
+
+                    // Esc closes without saving.
+                    if ((GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0) { g_beVisible = false; OLog("bageditor closed via Esc"); }
+                }
             }
         }
         InvalidateRect(h, nullptr, FALSE);   // repaint so the clock stays live

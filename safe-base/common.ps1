@@ -398,6 +398,20 @@ function Format-SafeBaseOverlayIni {
         "CheckOutbound        = $CheckOutbound"
         "ExpectedSteamProxySize = $ExpectedSteamProxySize"
         'ProbeTimeoutMs       = 1500'
+        ''
+        '[bageditor]'
+        'Enabled    = true'
+        'ToggleKey  = F8'
+        'Margin     = 14'
+        'MinValue   = 1'
+        'MaxValue   = 1000000'
+        'Step       = 10'
+        'StepBig    = 100'
+        '; The editor reads/writes %LOCALAPPDATA%\LeafItAloneSafe\bag-capacity.json'
+        '; by default (an absolute path, so it works even if the game is on a'
+        '; different drive than your profile). Only set ConfigPath to override it'
+        '; with a different ABSOLUTE path:'
+        '; ConfigPath = C:\some\other\place\bag-capacity.json'
     ) -join "`r`n" + "`r`n"
 }
 
