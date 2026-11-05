@@ -320,6 +320,12 @@ release notes inside its README.
   matrix, verdict extraction, and a **real `status.ps1` run against a fake script in a temp dir**
   that also proves `Write-Host` output reaches the redirected stdout. No game or real safe-base
   touched by the suite.
+- **`launcher/` polish — coloured Output log.** The scripts' redirected stdout arrives colourless
+  (PowerShell drops `Write-Host` colour without a console), so the log was all-white. `Services/LogColor.cs`
+  recovers the severity from each line's own markers (a pure, unit-tested classifier — failures red,
+  successes green, warnings amber, everything else neutral, matched in priority order so a failing run
+  never reads green); `Views/LogLineBrushConverter.cs` maps it to a brush on the log's item template.
+  The log stays a flat list of strings — nothing else changes. 83 headless checks pass.
 
 ## 1.0.0
 Initial release: the `overlay/` example.

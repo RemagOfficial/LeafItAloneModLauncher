@@ -6,6 +6,7 @@
         WindowStartupLocation="CenterScreen">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolVis" />
+        <v:LogLineBrushConverter x:Key="LogLineBrush" />
     </Window.Resources>
     <DockPanel LastChildFill="True">
 
@@ -22,7 +23,14 @@
                      Background="{StaticResource LogBrush}" Foreground="#D4D4D4"
                      ItemsSource="{Binding LogLines}"
                      v:LogAutoScroll.Enabled="True"
-                     ScrollViewer.HorizontalScrollBarVisibility="Disabled" />
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}" TextWrapping="Wrap"
+                                   Foreground="{Binding Converter={StaticResource LogLineBrush}}" />
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
         </Expander>
 
         <!-- Root path strip -->

@@ -31,6 +31,7 @@ internal static class Program
         CheckSequencePlan();
         CheckGameExeResolution();
         CheckSafeBaseLifecycle();
+        CheckLogColorization();
         ProcessRunnerCheck().GetAwaiter().GetResult();
         OrchestratorRunCheck().GetAwaiter().GetResult();
 
@@ -449,6 +450,36 @@ internal static class Program
                 "VERDICT captured from Write-Host output", verdict ?? "null");
         }
         finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    /// <summary>
+    /// Log colouring recovers the severity that redirected stdout strips. These cover the
+    /// real markers the launcher and the scripts emit, and the priority ordering that must
+    /// hold: a failing run is never green, a healthy VERDICT is, and a zero exit is neutral.
+    /// </summary>
+    private static void CheckLogColorization()
+    {
+        (string line, LogSeverity want, string what)[] cases =
+        {
+            ("--- apply OK ---", LogSeverity.Success, "apply OK -> green"),
+            ("--- apply FAILED (exit 7) ---", LogSeverity.Error, "apply FAILED -> red"),
+            ("applied v1.2.0", LogSeverity.Success, "applied -> green"),
+            ("reverted to vanilla", LogSeverity.Success, "reverted -> green"),
+            ("VERDICT: safe-base M1 + M2 + M3 + M4 active. Game's outbound blocked.", LogSeverity.Success, "healthy VERDICT -> green"),
+            ("VERDICT: not installed. Content mods ... refuse to apply.", LogSeverity.Warning, "not-installed VERDICT -> yellow"),
+            ("  MISSING - content mods cannot import the SDK. Re-run install.ps1.", LogSeverity.Error, "MISSING -> red"),
+            ("!! a marker has REAPPEARED in the current Saves/", LogSeverity.Error, "'!!' alert -> red"),
+            ("[warn] no Python found - apply will use apply.ps1 default.", LogSeverity.Warning, "no Python -> yellow"),
+            ("[launcher] exited with code 0.", LogSeverity.Info, "exit 0 -> neutral"),
+            ("[launcher] exited with code 5.", LogSeverity.Error, "non-zero exit -> red"),
+            ("safe-base status", LogSeverity.Info, "plain header -> neutral"),
+            ("python for apply: C:\\Python312\\python.exe", LogSeverity.Info, "path line -> neutral"),
+        };
+        foreach (var (line, want, what) in cases)
+        {
+            var got = LogColor.Classify(line);
+            Assert(got == want, what, $"got {got} for: {line}");
+        }
     }
 
     private static ModInfo FakeMod(string folder, string apply, string revert, bool python)
