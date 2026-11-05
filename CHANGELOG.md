@@ -291,6 +291,18 @@ release notes inside its README.
     streaming output). `Views/LogAutoScroll.cs` is a declarative attached behaviour on
     the log `ListBox`; it follows only when you're already near the bottom, so scrolling
     up to read history isn't yanked back down. Kept out of code-behind.
+- **`launcher/` L4 — Apply &amp; Launch.** The Dashboard's one action reconciles every mod
+  against its enable toggle in manifest `order` (lowest first): an enabled mod whose
+  config differs from what is applied is applied, a disabled mod that is still applied is
+  reverted, anything in sync is skipped — then the game starts. `ApplyOrchestrator.Plan()`
+  holds that decision (pure, unit-tested across the state matrix); `Services/GameLauncher.cs`
+  starts the exe safe-base recorded in `manifest.json` (`gameExe`) only if the path still
+  exists, and refuses to double-launch when the game is already running. **Any blocked or
+  failing mod aborts the sequence before launch**, so the game never boots half-modded;
+  with nothing pending the button just launches. The per-mod Apply/Revert logic was refactored
+  into shared `ApplyOneAsync`/`RevertOneAsync` cores the bulk loop reuses. 61 headless checks
+  pass — L4 adds the plan matrix and manifest-parsing edge cases (missing/blank/moved/malformed
+  `gameExe`), with no real game touched by the suite.
 
 ## 1.0.0
 Initial release: the `overlay/` example.

@@ -8,6 +8,9 @@ using LeafItAlone.Launcher.Models;
 
 namespace LeafItAlone.Launcher.Services;
 
+/// <summary>What the Apply &amp; Launch sequence should do with a mod, given its state.</summary>
+public enum ModOperation { None, Apply, Revert }
+
 /// <summary>
 /// Turns a mod's manifest into a real engine invocation and runs it through the
 /// single <see cref="ProcessRunner"/> (the launcher never reimplements patching —
@@ -66,6 +69,19 @@ public sealed class ApplyOrchestrator
         if (!forRevert && req.Python && string.IsNullOrEmpty(PythonPath))
             return "no Python interpreter found - set LEAF_PYTHON or add the bundled runtime.";
         return null;
+    }
+
+    /// <summary>
+    /// The L4 sequence's per-mod decision, kept pure so it is unit-testable without a
+    /// running game: an enabled mod whose state differs from what is applied must be
+    /// applied; a disabled mod that is still applied must be reverted; anything already
+    /// in sync needs nothing.
+    /// </summary>
+    public static ModOperation Plan(bool enabled, bool isApplied, bool isPending)
+    {
+        if (enabled && isPending) return ModOperation.Apply;
+        if (!enabled && isApplied) return ModOperation.Revert;
+        return ModOperation.None;
     }
 
     public IReadOnlyList<string> BuildApplyArgs(ModInfo mod)

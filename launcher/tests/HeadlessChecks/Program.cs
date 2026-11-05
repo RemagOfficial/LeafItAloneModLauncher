@@ -19,8 +19,8 @@ internal static class Program
 
     private static int Main()
     {
-        Console.WriteLine("Launcher L1/L2/L3 headless checks");
-        Console.WriteLine("==============================");
+        Console.WriteLine("Launcher L1/L2/L3/L4 headless checks");
+        Console.WriteLine("================================");
 
         CheckRepoAndDiscovery();
         CheckEnvPathExpansion();
@@ -28,6 +28,8 @@ internal static class Program
         CheckConfigEditorRoundTrip();
         CheckPendingLifecycle();
         CheckOrchestratorArgs();
+        CheckSequencePlan();
+        CheckGameExeResolution();
         ProcessRunnerCheck().GetAwaiter().GetResult();
         OrchestratorRunCheck().GetAwaiter().GetResult();
 
@@ -322,6 +324,70 @@ internal static class Program
             var failMod = FakeMod(dir, "apply_fail.ps1", "revert_ok.ps1", python: true);
             var failed = await ops.ApplyAsync(failMod);
             Assert(!failed.Success && failed.ExitCode == 7, "failing apply reports exit 7 as failure", $"exit {failed.ExitCode} success={failed.Success}");
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    /// <summary>
+    /// The L4 "Apply &amp; Launch" per-mod decision (pure), across the state matrix the
+    /// pending model can produce. Proves the sequence applies what should be live,
+    /// reverts what was switched off, and leaves in-sync mods alone (so it never churns
+    /// the game for no reason).
+    /// </summary>
+    private static void CheckSequencePlan()
+    {
+        Assert(ApplyOrchestrator.Plan(enabled: true, isApplied: false, isPending: true) == ModOperation.Apply,
+            "enabled + not yet applied -> Apply");
+        Assert(ApplyOrchestrator.Plan(enabled: true, isApplied: true, isPending: true) == ModOperation.Apply,
+            "enabled + edited after apply -> Apply");
+        Assert(ApplyOrchestrator.Plan(enabled: true, isApplied: true, isPending: false) == ModOperation.None,
+            "enabled + applied + unchanged -> None");
+        Assert(ApplyOrchestrator.Plan(enabled: false, isApplied: true, isPending: true) == ModOperation.Revert,
+            "disabled + still applied -> Revert");
+        Assert(ApplyOrchestrator.Plan(enabled: false, isApplied: false, isPending: false) == ModOperation.None,
+            "disabled + never applied -> None");
+    }
+
+    /// <summary>
+    /// The launcher starts the game from safe-base's manifest <c>gameExe</c>, but only
+    /// when that path actually exists. A missing/blank/malformed manifest resolves to
+    /// null (surfaced as a friendly message) instead of throwing or launching a stale path.
+    /// </summary>
+    private static void CheckGameExeResolution()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "leaf-l4-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var realExe = Path.Combine(dir, "Leaf it Alone.exe");
+            File.WriteAllText(realExe, "stub");
+
+            string WriteManifest(string name, JsonObject obj)
+            {
+                var p = Path.Combine(dir, name);
+                File.WriteAllText(p, obj.ToJsonString());
+                return p;
+            }
+
+            var ok = WriteManifest("ok.json", new JsonObject { ["gameExe"] = realExe });
+            Assert(Equals(GameLauncher.ResolveGameExeFrom(ok), realExe),
+                "resolves a live gameExe", GameLauncher.ResolveGameExeFrom(ok) ?? "null");
+
+            var moved = WriteManifest("moved.json", new JsonObject { ["gameExe"] = Path.Combine(dir, "gone.exe") });
+            Assert(GameLauncher.ResolveGameExeFrom(moved) is null, "gameExe that no longer exists -> null");
+
+            var blank = WriteManifest("blank.json", new JsonObject { ["gameExe"] = "" });
+            Assert(GameLauncher.ResolveGameExeFrom(blank) is null, "blank gameExe -> null");
+
+            var noKey = WriteManifest("nokey.json", new JsonObject { ["something"] = "else" });
+            Assert(GameLauncher.ResolveGameExeFrom(noKey) is null, "manifest without gameExe -> null");
+
+            var bad = Path.Combine(dir, "bad.json");
+            File.WriteAllText(bad, "{ this is not json ");
+            Assert(GameLauncher.ResolveGameExeFrom(bad) is null, "malformed manifest -> null (no throw)");
+
+            Assert(GameLauncher.ResolveGameExeFrom(Path.Combine(dir, "absent.json")) is null,
+                "missing manifest file -> null");
         }
         finally { try { Directory.Delete(dir, true); } catch { } }
     }

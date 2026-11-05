@@ -32,8 +32,10 @@ public sealed class MainViewModel : ObservableObject
 
         RescanCommand = new RelayCommand(_ => Rescan(), _ => !IsBusy);
         DemoRunnerCommand = new RelayCommand(async _ => await DemoRunnerAsync(), _ => !IsBusy);
-        ApplyCommand = new RelayCommand(async _ => await ApplyAsync(), _ => CanApply);
-        RevertCommand = new RelayCommand(async _ => await RevertAsync(), _ => CanRevert);
+        ApplyCommand = new RelayCommand(async _ => await ApplySelectedAsync(), _ => CanApply);
+        RevertCommand = new RelayCommand(async _ => await RevertSelectedAsync(), _ => CanRevert);
+        ApplyAndLaunchCommand = new RelayCommand(async _ => await ApplyAndLaunchAsync(), _ => !IsBusy && Editors.Count > 0);
+        LaunchCommand = new RelayCommand(_ => LaunchGame(), _ => !IsBusy);
 
         _runner.LineReceived += AppendLog;   // fires on a worker thread; marshalled in AppendLog
 
@@ -61,6 +63,11 @@ public sealed class MainViewModel : ObservableObject
 
     public int PendingCount => Editors.Count(e => e.IsPending);
 
+    /// <summary>One-line summary the Dashboard shows on the Apply &amp; Launch button area.</summary>
+    public string ChangeSummary => PendingCount == 0
+        ? "no changes to apply - Launch starts the game as-is"
+        : $"{PendingCount} mod(s) pending - Apply & Launch pushes them, then starts the game";
+
     private bool _isBusy;
     public bool IsBusy
     {
@@ -71,6 +78,8 @@ public sealed class MainViewModel : ObservableObject
             {
                 RescanCommand.RefreshCanExecute();
                 DemoRunnerCommand.RefreshCanExecute();
+                ApplyAndLaunchCommand.RefreshCanExecute();
+                LaunchCommand.RefreshCanExecute();
                 RefreshCommands();
             }
         }
@@ -80,6 +89,8 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand DemoRunnerCommand { get; }
     public RelayCommand ApplyCommand { get; }
     public RelayCommand RevertCommand { get; }
+    public RelayCommand ApplyAndLaunchCommand { get; }
+    public RelayCommand LaunchCommand { get; }
 
     // Apply is offered when the selection has something to push to the game; Revert
     // only when it is currently applied. All gated on not being mid-operation.
@@ -90,6 +101,8 @@ public sealed class MainViewModel : ObservableObject
     {
         ApplyCommand.RefreshCanExecute();
         RevertCommand.RefreshCanExecute();
+        ApplyAndLaunchCommand.RefreshCanExecute();
+        LaunchCommand.RefreshCanExecute();
     }
 
 
@@ -167,106 +180,149 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Drive <c>apply.ps1</c> for the selected mod. Mirrors the script's cheap
-    /// preconditions first (game closed / safe-base installed / Python present) for an
-    /// instant message, persists any edits, streams the engine log, and on a clean
-    /// exit records the applied sha + version so the badge clears. A non-zero exit or
-    /// timeout means the script bailed before committing - the game is left untouched.
+    /// Apply one mod through the engine (no UI concerns): mirror the script's cheap
+    /// preconditions, push any edits to disk, run <c>apply.ps1</c>, and on a clean exit
+    /// record the applied sha + version + enabled in state.json so the badge clears.
+    /// Returns true on success; a block / non-zero exit / timeout means the game was
+    /// left untouched. Shared by the per-mod Apply button and the L4 "Apply &amp; Launch"
+    /// sequence.
     /// </summary>
-    private async System.Threading.Tasks.Task ApplyAsync()
+    private async System.Threading.Tasks.Task<bool> ApplyOneAsync(ConfigEditorViewModel ed)
     {
-        var ed = SelectedEditor;
-        if (ed is null) return;
         var mod = ed.Mod;
-
         var block = _ops.BlockingReason(mod, forRevert: false);
-        if (block is not null)
-        {
-            StatusText = block;
-            Log($"[apply blocked] {mod.Id}: {block}");
-            return;
-        }
+        if (block is not null) { Log($"[apply blocked] {mod.Id}: {block}"); StatusText = block; return false; }
 
-        IsBusy = true;
-        try
+        ed.Save();   // push any edits to disk before the engine reads the config
+        Log($"--- apply {mod.Id} v{mod.Version} (python: {PythonOrDefault()}) ---");
+        var res = await _ops.ApplyAsync(mod);
+        if (res.Success)
         {
-            ed.Save();   // push any edits to disk before the engine reads the config
-            Log($"--- apply {mod.Id} v{mod.Version} (python: {PythonOrDefault()}) ---");
-            var res = await _ops.ApplyAsync(mod);
-            if (res.Success)
-            {
-                var st = _state.For(mod.Id);
-                st.Enabled = true;
-                st.LastAppliedConfigSha = ed.CurrentConfigSha;
-                st.AppliedVersion = mod.Version;
-                TrySaveState();
-                ed.MarkApplied(ed.CurrentConfigSha);
-                ed.Enabled = true;
-                ed.Info = $"applied v{mod.Version}";
-                StatusText = $"{mod.Name} applied.";
-                Log("--- apply OK ---");
-            }
-            else
-            {
-                StatusText = res.TimedOut
-                    ? $"{mod.Name}: apply timed out (game untouched)."
-                    : $"{mod.Name}: apply failed (exit {res.ExitCode}); game left untouched.";
-                Log(res.TimedOut ? "--- apply TIMEOUT ---" : $"--- apply FAILED (exit {res.ExitCode}) ---");
-            }
+            var st = _state.For(mod.Id);
+            st.Enabled = true;
+            st.LastAppliedConfigSha = ed.CurrentConfigSha;
+            st.AppliedVersion = mod.Version;
+            TrySaveState();
+            ed.MarkApplied(ed.CurrentConfigSha);
+            ed.Enabled = true;
+            ed.Info = $"applied v{mod.Version}";
+            Log("--- apply OK ---");
+            return true;
         }
-        finally { IsBusy = false; }
+        Log(res.TimedOut ? "--- apply TIMEOUT ---" : $"--- apply FAILED (exit {res.ExitCode}) ---");
+        return false;
     }
 
     /// <summary>
-    /// Drive <c>revert.ps1</c> for the selected mod: restore the pristine vanilla
-    /// bundle through the safe-base and clear the recorded applied sha + version.
+    /// Revert one mod through <c>revert.ps1</c> (restore the pristine vanilla bundle via
+    /// the safe-base) and clear the recorded applied sha + version. Returns success.
     /// </summary>
-    private async System.Threading.Tasks.Task RevertAsync()
+    private async System.Threading.Tasks.Task<bool> RevertOneAsync(ConfigEditorViewModel ed)
+    {
+        var mod = ed.Mod;
+        var block = _ops.BlockingReason(mod, forRevert: true);
+        if (block is not null) { Log($"[revert blocked] {mod.Id}: {block}"); StatusText = block; return false; }
+
+        Log($"--- revert {mod.Id} ---");
+        var res = await _ops.RevertAsync(mod);
+        if (res.Success)
+        {
+            var st = _state.For(mod.Id);
+            st.Enabled = false;
+            st.LastAppliedConfigSha = "";
+            st.AppliedVersion = "";
+            TrySaveState();
+            ed.MarkReverted();
+            ed.Enabled = false;
+            ed.Info = "reverted to vanilla";
+            Log("--- revert OK ---");
+            return true;
+        }
+        Log(res.TimedOut ? "--- revert TIMEOUT ---" : $"--- revert FAILED (exit {res.ExitCode}) ---");
+        return false;
+    }
+
+    // ---- per-mod buttons: run the core for the selected mod + a status line ----
+
+    private async System.Threading.Tasks.Task ApplySelectedAsync()
     {
         var ed = SelectedEditor;
         if (ed is null) return;
-        var mod = ed.Mod;
+        IsBusy = true;
+        try { StatusText = await ApplyOneAsync(ed) ? $"{ed.Mod.Name} applied." : $"{ed.Mod.Name}: apply failed - game left untouched."; }
+        finally { IsBusy = false; }
+    }
 
-        var block = _ops.BlockingReason(mod, forRevert: true);
-        if (block is not null)
-        {
-            StatusText = block;
-            Log($"[revert blocked] {mod.Id}: {block}");
-            return;
-        }
+    private async System.Threading.Tasks.Task RevertSelectedAsync()
+    {
+        var ed = SelectedEditor;
+        if (ed is null) return;
+        IsBusy = true;
+        try { StatusText = await RevertOneAsync(ed) ? $"{ed.Mod.Name} reverted." : $"{ed.Mod.Name}: revert failed (non-zero exit)."; }
+        finally { IsBusy = false; }
+    }
 
+    // ---- L4: Apply & Launch ----
+
+    /// <summary>
+    /// The Dashboard's one action: reconcile every mod against its enable toggle in
+    /// manifest <c>order</c> (lowest first), then start the game. An enabled mod whose
+    /// config differs from what is applied gets applied; a disabled mod that is still
+    /// applied gets reverted; anything already in sync is skipped. Any blocked or failed
+    /// operation aborts BEFORE launching, so the game never starts with a half-applied,
+    /// inconsistent mod set. With nothing pending it simply launches.
+    /// </summary>
+    private async System.Threading.Tasks.Task ApplyAndLaunchAsync()
+    {
         IsBusy = true;
         try
         {
-            Log($"--- revert {mod.Id} ---");
-            var res = await _ops.RevertAsync(mod);
-            if (res.Success)
+            int changes = 0;
+            foreach (var ed in Editors.OrderBy(e => e.Mod.Order))
             {
-                var st = _state.For(mod.Id);
-                st.Enabled = false;
-                st.LastAppliedConfigSha = "";
-                st.AppliedVersion = "";
-                TrySaveState();
-                ed.MarkReverted();
-                ed.Enabled = false;
-                ed.Info = "reverted to vanilla";
-                StatusText = $"{mod.Name} reverted.";
-                Log("--- revert OK ---");
+                switch (ApplyOrchestrator.Plan(ed.Enabled, ed.IsApplied, ed.IsPending))
+                {
+                    case ModOperation.Apply:
+                        Log($"[seq] apply {ed.Mod.Id} (order {ed.Mod.Order})");
+                        if (!await ApplyOneAsync(ed)) { StatusText = $"stopped: {ed.Mod.Name} failed to apply - game not launched."; return; }
+                        changes++;
+                        break;
+                    case ModOperation.Revert:
+                        Log($"[seq] revert {ed.Mod.Id} (order {ed.Mod.Order})");
+                        if (!await RevertOneAsync(ed)) { StatusText = $"stopped: {ed.Mod.Name} failed to revert - game not launched."; return; }
+                        changes++;
+                        break;
+                }
             }
-            else
-            {
-                StatusText = res.TimedOut
-                    ? $"{mod.Name}: revert timed out."
-                    : $"{mod.Name}: revert failed (exit {res.ExitCode}).";
-                Log(res.TimedOut ? "--- revert TIMEOUT ---" : $"--- revert FAILED (exit {res.ExitCode}) ---");
-            }
+
+            Log(changes == 0 ? "[seq] nothing to apply - launching as-is" : $"[seq] {changes} mod(s) reconciled, launching");
+            LaunchGame();
         }
         finally { IsBusy = false; }
     }
 
+    /// <summary>Start the game from the path safe-base recorded in its manifest.</summary>
+    private void LaunchGame()
+    {
+        if (ApplyOrchestrator.IsGameRunning())
+        {
+            StatusText = "Leaf it Alone is already running.";
+            Log("[launch] game already running - not starting another instance");
+            return;
+        }
+        var (ok, message) = GameLauncher.Launch();
+        StatusText = ok ? "Game launched. Play safe (offline)." : message;
+        Log("[launch] " + message);
+    }
+
+
     private string PythonOrDefault() => string.IsNullOrEmpty(_ops.PythonPath) ? "apply.ps1 default" : _ops.PythonPath!;
 
-    private void RaisePendingCount() => OnPropertyChanged(nameof(PendingCount));
+    private void RaisePendingCount()
+    {
+        OnPropertyChanged(nameof(PendingCount));
+        OnPropertyChanged(nameof(ChangeSummary));
+    }
 
     /// <summary>
     /// L1 verification that the subprocess plumbing works end to end: run a trivial

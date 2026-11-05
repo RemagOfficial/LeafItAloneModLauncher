@@ -15,7 +15,7 @@ unchanged.
 
 ## Status
 
-Milestones **L1 (scaffold)** and **L2 (config editing)** are complete.
+Milestones **L1–L4** are complete.
 
 **L1** — WPF app that builds and runs; the subprocess `ProcessRunner` (PowerShell
 `-File`, `ArgumentList` quoting, streamed Output log, timeout + exit code); mod
@@ -27,13 +27,27 @@ manifest field by declared `type` (slider+box for int/float, checkbox for bool,
 combo for enum, text box for text), with `when`-gated visibility (e.g. the bag
 sizes only show in `mode: sizes`). Edits write the live
 `%LOCALAPPDATA%\LeafItAloneSafe\<id>.json`, **preserving every key the schema does
-not mention** (`_comment`, `_applyHelper`, …), and the list shows a **pending**
-badge when the config's SHA differs from the SHA recorded at the last apply. The
-enable toggle and pending state persist to `launcher/state.json`.
+not mention** (`_comment`, `_applyHelper`, …). The enable toggle and applied-config
+SHA persist to `launcher/state.json`.
 
-Still ahead: **apply/revert orchestration** (L3), **Apply & Launch** (L4), the safe-base
-**lifecycle + first-run wizard** (L5), the overlay slimdown (L6), the **bundled Python
-runtime** (L7) and **distribution polish** (L8).
+**L3** — **apply/revert orchestration**: the Mods detail pane has **Apply / Revert**
+buttons that drive the real `apply.ps1` / `revert.ps1` through `ApplyOrchestrator` +
+`ProcessRunner` (never reimplementing patching). `-Python` is resolved by
+`PythonLocator` (bundled → `LEAF_PYTHON` → system) and passed to apply only. Cheap
+preconditions (game running / safe-base / Python) are mirrored for a friendly early
+message while the scripts stay authoritative. On a clean exit the applied SHA +
+version are recorded and the badge clears. The Output log **auto-scrolls** to new
+lines (following only when you're already at the bottom).
+
+**L4** — **Apply & Launch**: the Dashboard action reconciles every mod against its
+enable toggle in manifest `order` (apply what should be live, revert what was switched
+off, skip what's in sync), then starts the game from the path safe-base recorded in
+`manifest.json` (`GameLauncher`). Any blocked/failed mod stops the sequence **before**
+launch, so the game never boots half-modded.
+
+Still ahead: the safe-base **lifecycle + first-run wizard** (L5), the overlay slimdown
+(L6), the **bundled Python runtime** (L7) and **distribution polish** (L8).
+
 
 ## Layout
 
