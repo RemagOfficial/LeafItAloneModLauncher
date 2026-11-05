@@ -269,6 +269,24 @@ release notes inside its README.
   - bag-capacity field ranges tightened (user feedback): size sliders capped
     **0..9999** and multiplier **max 10x** — values above 4 digits overrun the
     in-game bag UI element, so the launcher now clamps them out of range.
+- **`launcher/` L3 — apply/revert orchestration.** The launcher now drives the real
+  engines instead of reimplementing them. `Services/ApplyOrchestrator.cs` turns a
+  manifest's `apply`/`revert` blocks into a `powershell -File …` call through the one
+  `ProcessRunner`, substituting `-Python` from `Services/PythonLocator.cs` (bundled
+  `runtime/py` → `LEAF_PYTHON` → `C:\Python312`) — to **apply only**, since
+  `revert.ps1` declares no `-Python`. It mirrors the scripts' cheap preconditions for
+  an instant message (game running → `apply.ps1` exit 3; safe-base missing; Python
+  missing → exit 5) while the scripts stay authoritative and roll the bundle + catalog
+  back on any failure. `MainViewModel` gains **Apply / Revert** buttons: Apply saves
+  pending edits, runs `apply.ps1`, and on a clean exit records `lastAppliedConfigSha` +
+  `appliedVersion` + `enabled` in `state.json` so the badge clears; a non-zero exit is
+  reported as "game left untouched". Pending is now **enabled-aware** (changed config
+  while enabled, *or* an applied mod the user switched off — a revert is owed). Elevation
+  is not needed for apply/revert (Steam library is user-writable; only HKCU + the game
+  folder are written). 50 headless checks pass — L3 adds the pending lifecycle, the
+  `-Yes`/`-Python` arg contract, and a **real subprocess round trip against fake scripts
+  in a temp dir** (never the game): launch, streamed output, exit 0 vs exit 7, and a
+  revert that proves no undeclared `-Python` is passed.
 
 ## 1.0.0
 Initial release: the `overlay/` example.

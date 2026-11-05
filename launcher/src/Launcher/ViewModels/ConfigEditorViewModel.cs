@@ -53,11 +53,18 @@ public sealed class ConfigEditorViewModel : ObservableObject
     private bool _enabled;
 
     /// <summary>
-    /// Pending = the live config's sha differs from the sha recorded at the last
-    /// apply (never applied yet also counts, since the recorded sha is empty). L3
-    /// layers the enable-toggle onto this once apply orchestration exists.
+    /// Pending = the state on disk differs from what is currently applied to the
+    /// game, so an Apply/Revert would change something. Two cases (plan: "enabled
+    /// state changed OR live-config sha != lastAppliedConfigSha"):
+    ///  * enabled  - pending when the config's sha differs from the applied sha
+    ///               (edited since the last apply, or never applied: applied is empty).
+    ///  * disabled - pending when an applied sha exists (it's live in the game but
+    ///               the user has switched it off, so a revert is owed).
     /// </summary>
-    public bool IsPending => _currentSha != _lastAppliedSha;
+    public bool IsPending => Enabled ? _currentSha != _lastAppliedSha : _lastAppliedSha.Length > 0;
+
+    /// <summary>True when the mod is currently applied in the game (a revert is possible).</summary>
+    public bool IsApplied => _lastAppliedSha.Length > 0;
 
     /// <summary>Seed from launcher state, then re-evaluate pending.</summary>
     public void ApplyState(ModState state)
@@ -133,6 +140,7 @@ public sealed class ConfigEditorViewModel : ObservableObject
     private void RaisePending()
     {
         OnPropertyChanged(nameof(IsPending));
+        OnPropertyChanged(nameof(IsApplied));
     }
 
     /// <summary>Snapshot used to reconcile state.json after a successful apply (L3/L4).</summary>
@@ -144,4 +152,8 @@ public sealed class ConfigEditorViewModel : ObservableObject
         _lastAppliedSha = appliedSha;
         RaisePending();
     }
+
+    /// <summary>After L3 reverts cleanly there is nothing applied; the pending badge
+    /// then reflects the disabled state (an empty applied sha is not "owed").</summary>
+    public void MarkReverted() => MarkApplied("");
 }

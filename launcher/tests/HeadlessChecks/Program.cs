@@ -19,19 +19,23 @@ internal static class Program
 
     private static int Main()
     {
-        Console.WriteLine("Launcher L1/L2 headless checks");
-        Console.WriteLine("===========================");
+        Console.WriteLine("Launcher L1/L2/L3 headless checks");
+        Console.WriteLine("==============================");
 
         CheckRepoAndDiscovery();
         CheckEnvPathExpansion();
         CheckConfigStoreRoundTrip();
         CheckConfigEditorRoundTrip();
+        CheckPendingLifecycle();
+        CheckOrchestratorArgs();
         ProcessRunnerCheck().GetAwaiter().GetResult();
+        OrchestratorRunCheck().GetAwaiter().GetResult();
 
         Console.WriteLine();
         Console.WriteLine(_failures == 0 ? "ALL CHECKS PASSED" : $"{_failures} CHECK(S) FAILED");
         return _failures == 0 ? 0 : 1;
     }
+
 
     private static void CheckRepoAndDiscovery()
     {
@@ -154,14 +158,16 @@ internal static class Program
             Assert(small.IsVisible && !multiplier.IsVisible, "visibility re-gates on mode change");
 
             // Edit a value and save; confirm the live file + extras + pending.
+            // Pending is enabled-aware (L3): a disabled mod is never pending, so opt in first.
+            editor.Enabled = true;
             small.Num = 333;
-            bool pendingBefore = editor.IsPending;
+            bool pendingBefore = editor.IsPending;   // enabled + nothing applied yet
             editor.Save();
             var saved = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
             Assert(Equals(saved["sizes"]?["small"]?.GetValue<int>(), 333), "editor wrote sizes.small");
             Assert(Equals(saved["_comment"]?.GetValue<string>(), "keep"), "editor preserved _comment");
             Assert(Equals(saved["_applyHelper"]?.GetValue<string>(), @"C:\h.ps1"), "editor preserved _applyHelper");
-            Assert(pendingBefore && editor.IsPending, "editor reports pending until applied (L3)");
+            Assert(pendingBefore && editor.IsPending, "enabled & unapplied config stays pending");
 
             // PowerShell ConvertFrom-Json must accept the file the launcher wrote (plan verify).
             var runner = new ProcessRunner();
@@ -193,7 +199,150 @@ internal static class Program
             Assert(lines.Any(l => l.Contains("ping")), "runner: streamed stdout line", string.Join("|", lines));
     }
 
+    /// <summary>
+    /// L3 pending model (enabled-aware), exercised without WPF: the badge must track
+    /// "would an Apply/Revert change the game?" - not just "does the file differ from
+    /// what was applied". Mirrors exactly what the VM does (Apply saves, then records
+    /// the applied sha; Revert clears it).
+    /// </summary>
+    private static void CheckPendingLifecycle()
+    {
+        var loc = new RepoLocator();
+        if (!loc.TryLocate(AppContext.BaseDirectory)) { Assert(false, "pending test located content root", loc.LastError ?? ""); return; }
+        var bag = new ModDiscovery().Discover(loc.ModsRoot!).Mods.FirstOrDefault(m => m.Id == "bag-capacity");
+        if (bag is null) { Assert(false, "pending test found bag-capacity"); return; }
+
+        var dir = Path.Combine(Path.GetTempPath(), "leaf-l3p-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "bag-capacity.json");
+        try
+        {
+            File.WriteAllText(path,
+                "{\"mode\":\"multiplier\",\"multiplier\":2.0," +
+                "\"sizes\":{\"small\":100,\"medium\":400,\"big\":1000,\"giant\":1600}}");
+            bag.Manifest.ConfigPath = path;
+
+            var editor = new ConfigEditorViewModel(bag);
+            editor.ApplyState(new ModState { Enabled = false, LastAppliedConfigSha = "" });
+            Assert(!editor.IsPending && !editor.IsApplied, "disabled & never applied -> idle (no badge)");
+
+            editor.Enabled = true;
+            Assert(editor.IsPending && !editor.IsApplied, "enabled & not yet applied -> pending");
+
+            // The VM's apply sequence: save, then record the applied sha.
+            editor.Save();
+            editor.MarkApplied(editor.CurrentConfigSha);
+            Assert(!editor.IsPending && editor.IsApplied, "applied & unchanged -> clean (applied)");
+
+            // Editing then saving re-dirties it (this is what Apply's Save would push).
+            editor.Fields.First(f => f.Key == "multiplier").Num = 4.0;
+            editor.Save();
+            Assert(editor.IsPending && editor.IsApplied, "config changed after apply -> pending");
+
+            // Disabling an applied mod owes a revert, so it is pending again.
+            editor.Enabled = false;
+            Assert(editor.IsPending && editor.IsApplied, "disabled while applied -> pending (revert owed)");
+
+            // The VM's revert sequence: clear the applied sha.
+            editor.MarkReverted();
+            editor.Enabled = false;
+            Assert(!editor.IsPending && !editor.IsApplied, "after revert -> idle (nothing applied)");
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    /// <summary>
+    /// Command-line construction must match what each script declares: apply gets
+    /// <c>-Yes -Python &lt;resolved&gt;</c>; revert gets <c>-Yes</c> only (it has no
+    /// <c>-Python</c> parameter, so passing one would make PowerShell exit non-zero).
+    /// Also that a mod with no requirements is never blocked.
+    /// </summary>
+    private static void CheckOrchestratorArgs()
+    {
+        var mod = FakeMod(Path.GetTempPath(), "apply.ps1", "revert.ps1", python: true);
+        var ops = new ApplyOrchestrator(new ProcessRunner()) { PythonPath = @"C:\py\python.exe" };
+
+        var apply = ops.BuildApplyArgs(mod);
+        Assert(apply.Contains("-Yes"), "apply args include -Yes", string.Join(" ", apply));
+        Assert(apply.Contains("-Python") && apply.Contains(@"C:\py\python.exe"),
+            "apply args include -Python <path>", string.Join(" ", apply));
+
+        var revert = ops.BuildRevertArgs(mod);
+        Assert(revert.Contains("-Yes"), "revert args include -Yes", string.Join(" ", revert));
+        Assert(!revert.Contains("-Python"), "revert args do NOT include -Python", string.Join(" ", revert));
+
+        // No requirement was flagged off, so nothing should block it here.
+        var bare = FakeMod(Path.GetTempPath(), "apply.ps1", "revert.ps1", python: false);
+        Assert(ops.BlockingReason(bare, forRevert: false) is null, "mod with no requirements is not blocked");
+    }
+
+    /// <summary>
+    /// End-to-end through the real subprocess runner, but against FAKE engine scripts
+    /// in a temp folder - never the game. Proves the orchestrator launches PowerShell,
+    /// passes the args, streams output, and reports the exit code faithfully (0 = ok,
+    /// 7 = a scripted failure the caller must treat as "game untouched").
+    /// </summary>
+    private static async System.Threading.Tasks.Task OrchestratorRunCheck()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "leaf-l3r-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "apply_ok.ps1"),
+                "param([switch]$Yes,[string]$Python)\n" +
+                "\"Yes=$Yes Python=$Python\" | Out-File -FilePath 'apply_args.txt' -Encoding ascii\n" +
+                "Write-Output 'fake-apply-ran'\nexit 0\n");
+            File.WriteAllText(Path.Combine(dir, "apply_fail.ps1"),
+                "param([switch]$Yes,[string]$Python)\nexit 7\n");
+            File.WriteAllText(Path.Combine(dir, "revert_ok.ps1"),
+                "param([switch]$Yes)\n" +
+                "\"Yes=$Yes\" | Out-File -FilePath 'revert_args.txt' -Encoding ascii\n" +
+                "Write-Output 'fake-revert-ran'\nexit 0\n");
+
+            var lines = new System.Collections.Generic.List<string>();
+            var runner = new ProcessRunner();
+            runner.LineReceived += l => { lock (lines) lines.Add(l); };
+            var ops = new ApplyOrchestrator(runner) { PythonPath = "PYTEST" };
+
+            var okMod = FakeMod(dir, "apply_ok.ps1", "revert_ok.ps1", python: true);
+
+            var applied = await ops.ApplyAsync(okMod);
+            Assert(applied.Success, "fake apply exited 0", $"exit {applied.ExitCode} timeout={applied.TimedOut} fault={applied.Fault}");
+            Assert(File.Exists(Path.Combine(dir, "apply_args.txt")), "fake apply actually ran");
+            string applyArgs = File.Exists(Path.Combine(dir, "apply_args.txt"))
+                ? File.ReadAllText(Path.Combine(dir, "apply_args.txt")) : "";
+            Assert(applyArgs.Contains("Yes=True") && applyArgs.Contains("PYTEST"),
+                "fake apply received -Yes and -Python", applyArgs.Trim());
+            lock (lines) Assert(lines.Any(l => l.Contains("fake-apply-ran")), "apply output streamed to log", string.Join("|", lines));
+
+            var reverted = await ops.RevertAsync(okMod);
+            Assert(reverted.Success, "fake revert exited 0 (no -Python error)", $"exit {reverted.ExitCode}");
+            Assert(File.Exists(Path.Combine(dir, "revert_args.txt")), "fake revert actually ran");
+
+            var failMod = FakeMod(dir, "apply_fail.ps1", "revert_ok.ps1", python: true);
+            var failed = await ops.ApplyAsync(failMod);
+            Assert(!failed.Success && failed.ExitCode == 7, "failing apply reports exit 7 as failure", $"exit {failed.ExitCode} success={failed.Success}");
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    private static ModInfo FakeMod(string folder, string apply, string revert, bool python)
+    {
+        var manifest = new ModManifest
+        {
+            Id = "fake-mod",
+            Name = "Fake Mod",
+            Version = "0.0.1",
+            ConfigPath = "",
+            Apply = new CommandSpec { Script = apply, Args = new System.Collections.Generic.List<string> { "-Yes" } },
+            Revert = new CommandSpec { Script = revert, Args = new System.Collections.Generic.List<string> { "-Yes" } },
+            Requires = new Requires { SafeBase = false, GameNotRunning = false, Python = python },
+        };
+        return new ModInfo(manifest, folder, Path.Combine(folder, "mod.json"));
+    }
+
     private static void Assert(bool ok, string what, string detail = "")
+
     {
         Console.WriteLine($"  [{(ok ? "PASS" : "FAIL")}] {what}{(ok ? "" : "  -> " + detail)}");
         if (!ok) _failures++;

@@ -96,13 +96,20 @@
                             <TextBlock TextWrapping="Wrap" Margin="0,8,0,0" Text="{Binding Mod.Description}" />
 
                             <CheckBox Margin="0,12,0,0" IsChecked="{Binding Enabled, Mode=TwoWay}"
-                                      Content="Enable this mod (applied on Launch in L4)" FontWeight="Bold" />
+                                      Content="Enable this mod (Apply/Revert below; all enabled mods apply on Launch in L4)" FontWeight="Bold" />
 
                             <WrapPanel Margin="0,12,0,0">
                                 <Button Content="Save config" Command="{Binding SaveCommand}"
                                         Padding="14,6" Margin="0,0,8,0"
                                         Background="{StaticResource AccentBrush}" Foreground="White" />
-                                <Button Content="Reload" Command="{Binding ReloadCommand}" Padding="14,6" />
+                                <Button Content="Reload" Command="{Binding ReloadCommand}" Padding="14,6" Margin="0,0,8,0" />
+                                <!-- Apply/Revert live on the MainViewModel; reach them from
+                                     the editor's DataContext via the window. -->
+                                <Button Content="Apply to game" Padding="14,6" Margin="0,0,8,0"
+                                        Foreground="White" Background="#2E7D32"
+                                        Command="{Binding DataContext.ApplyCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                <Button Content="Revert" Padding="14,6"
+                                        Command="{Binding DataContext.RevertCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
                             </WrapPanel>
                             <TextBlock Margin="0,6,0,0" Foreground="Gray" TextWrapping="Wrap" Text="{Binding Info}" />
 
