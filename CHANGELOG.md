@@ -85,6 +85,43 @@ release notes inside its README.
   install" in yellow) even when cloud was already off. Reworded to neutral
   color with the warning reserved for the actual rehydration case (a marker
   reappearing in the live isolated Saves/).
+- **`safe-base/` M4 landed** (in-game test pending): persistent OFFLINE
+  banner + one-shot startup preflight, merged into the standalone overlay's
+  `version.dll` (no separate DLL hijack). `overlay/leaf_overlay.cpp` gains a
+  `[safebase]` INI section (default `Enabled = false`, so the standalone
+  overlay is unchanged) that draws a colour-keyed top-centre strip
+  `OFFLINE · MODDED PLAY · SCORES WILL NOT BE SUBMITTED` which F9 does NOT
+  hide, and runs three checks at game startup from inside `Leaf it Alone.exe`:
+  (a) on-disk `steam_api64.dll` matches the expected proxy size, (b) the
+  `.safebase-empty` marker exists at the isolated Saves/ path, (c) a
+  non-blocking `connect(1.1.1.1:443)` with a 1.5 s timeout does NOT complete
+  (the outbound probe is the only meaningful way to prove the program-scoped
+  firewall rule is enforcing, since PowerShell would test its own process,
+  not the game's). All pass = green banner; any fail = red banner with a
+  compact reason. Deliberately **no** trip-wire, **no** MessageBox, **no**
+  termination, **no** periodic re-check — a user who manually removes the
+  rule mid-session is not policed. `safe-base/common.ps1` grows four
+  helpers (`Find-GameOverlaySlot`, `Format-SafeBaseOverlayIni`,
+  `Install-VersionOverlay`, `Restore-VersionOverlay`) and a new
+  `OverlaySourceDll` constant. `install.ps1` adds an M4 step after M3:
+  backs up any existing `version.dll` + `LeafOverlay.ini` to
+  `%LOCALAPPDATA%\LeafItAloneSafe\backup\overlay\`, copies our build in,
+  writes a fresh ASCII INI with `[safebase] Enabled=true` and
+  `ExpectedSteamProxySize=<size M2 installed>`. Manifest `schemaVersion`
+  bumps 3 → 4 with a new `versionOverlay` block (source DLL SHA, expected
+  proxy size, prior backup paths). Rollback unwinds overlay FIRST, then
+  Saves, then DLL, then rule. `uninstall.ps1` reorders: overlay restore
+  STEP 1 (so any prior standalone-overlay install comes back before anything
+  else changes), then Saves, then DLL, then firewall LAST. A foreign DLL at
+  the slot (not matching our recorded SHA) is **parked** as
+  `overlay-version-modified-<ts>.dll`, never deleted. New flag
+  `-SkipOverlay`. `status.ps1` gains an M4 section (version.dll present, SHA
+  match, INI present with `[safebase] Enabled=true`, expected proxy size,
+  prior backup integrity) and verdict `M1 + M2 + M3 + M4 active` in green;
+  `M1 + M2 + M3 without M4` shows yellow (banner missing). Prebuilt
+  `overlay/version.dll` rebuilt: 188 416 bytes, SHA-256
+  `992FD87186DB93EA8F15B933B030C305538CD3705AA7DA884BC1BDB59AF1D68D`
+  (prior overlay commit was 179 200 bytes).
 - First content mod planned: `content-mods/bag-capacity/` (M6).
 
 ## 1.0.0

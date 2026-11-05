@@ -331,3 +331,178 @@ function Restore-SaveIsolation {
     }
     return @{ restored = $false; backupPath = $null }
 }
+
+# ---------------------------------------------------------------------------
+# M4 - version.dll overlay (persistent banner + one-shot preconditions)
+# ---------------------------------------------------------------------------
+
+# Where the safe-base install lives. The DLL is a rebuild of `overlay/`; safe-
+# base installs the SAME binary, controlled by the INI's [safebase] section.
+Set-Variable -Name 'OverlaySourceDll' `
+    -Value (Join-Path (Split-Path -Parent $PSScriptRoot) 'overlay\version.dll') -Option Constant
+
+# The version.dll hijack slot is always the game's own folder (Unity's
+# UnityPlayer.dll imports six `version.*` functions, and Windows resolves
+# DLLs from the app dir first). No <GameFolder>_Data path involved.
+function Find-GameOverlaySlot {
+    param([Parameter(Mandatory)][string]$GameExePath)
+    $root = Get-GameFolderFromExe -ExePath $GameExePath
+    return @{
+        GameFolder = $root
+        VersionDll = (Join-Path $root 'version.dll')
+        OverlayIni = (Join-Path $root 'LeafOverlay.ini')
+    }
+}
+
+# Format the LeafOverlay.ini that safe-base drops into the game folder. Kept
+# in a function (rather than a template file) so install.ps1 can inject the
+# live proxy size and paths without any string substitution.
+function Format-SafeBaseOverlayIni {
+    param(
+        [Parameter(Mandatory)][long]$ExpectedSteamProxySize,
+        [ValidateSet('true','false')][string]$CheckOutbound = 'true'
+    )
+    @(
+        '; LeafOverlay.ini - written by safe-base install.ps1 (M4).'
+        '; Edit and relaunch the game. See ../overlay/README.md for the schema.'
+        ''
+        '[overlay]'
+        'ToggleKey = F9'
+        'Corner = TopLeft'
+        'Margin = 22'
+        'Alpha = 235'
+        'ShowTitle   = true'
+        'ShowClock   = true'
+        'ShowUptime  = true'
+        'ShowMetrics = true'
+        'Title    = Leaf it Alone - safe-base'
+        'Subtitle = modded play, offline'
+        ''
+        '[safebase]'
+        'Enabled              = true'
+        'Banner               = true'
+        'BannerCorner         = TopCenter'
+        'BannerMargin         = 14'
+        'CheckSteamProxy      = true'
+        'CheckSaveIsolation   = true'
+        "CheckOutbound        = $CheckOutbound"
+        "ExpectedSteamProxySize = $ExpectedSteamProxySize"
+        'ProbeTimeoutMs       = 1500'
+    ) -join "`r`n" + "`r`n"
+}
+
+# Drop safe-base's version.dll + LeafOverlay.ini into the game folder. Backs
+# up anything already there (a prior overlay/ install, a MelonLoader 0.7.3
+# leftover, ...) so uninstall can put it back exactly. Never deletes a file
+# it did not install.
+function Install-VersionOverlay {
+    param(
+        [Parameter(Mandatory)][string]$GameExePath,
+        [Parameter(Mandatory)][long]$ExpectedSteamProxySize,
+        [string]$SourceDll
+    )
+    if (-not $SourceDll) { $SourceDll = $OverlaySourceDll }
+    if (-not (Test-Path -LiteralPath $SourceDll)) {
+        throw "overlay version.dll missing at $SourceDll (run overlay\build_overlay.ps1)"
+    }
+    $slot = Find-GameOverlaySlot -GameExePath $GameExePath
+    $overlayBackup = Join-Path $BackupDir 'overlay'
+    New-Item -Path $overlayBackup -ItemType Directory -Force | Out-Null
+
+    $result = [ordered]@{
+        gameFolder         = $slot.GameFolder
+        versionDllPath     = $slot.VersionDll
+        overlayIniPath     = $slot.OverlayIni
+        sourceDllPath      = (Resolve-Path -LiteralPath $SourceDll).ProviderPath
+        sourceDllSize      = (Get-Item -LiteralPath $SourceDll).Length
+        sourceDllSha256    = (Get-FileSha256 -Path $SourceDll)
+        expectedProxySize  = $ExpectedSteamProxySize
+        backupDir          = $overlayBackup
+        priorVersionDll    = $false
+        priorVersionBackup = $null
+        priorIni           = $false
+        priorIniBackup     = $null
+        installedAt        = (Get-Date).ToUniversalTime().ToString('o')
+    }
+
+    if (Test-Path -LiteralPath $slot.VersionDll) {
+        $bk = Join-Path $overlayBackup 'version.dll'
+        if (Test-Path -LiteralPath $bk) {
+            throw "prior overlay version.dll backup already exists at $bk. Uninstall safe-base first."
+        }
+        Move-Item -LiteralPath $slot.VersionDll -Destination $bk -Force
+        $result.priorVersionDll    = $true
+        $result.priorVersionBackup = $bk
+        Write-Host "  - backed up existing version.dll to $bk"
+    }
+    if (Test-Path -LiteralPath $slot.OverlayIni) {
+        $bk = Join-Path $overlayBackup 'LeafOverlay.ini'
+        if (Test-Path -LiteralPath $bk) {
+            throw "prior LeafOverlay.ini backup already exists at $bk. Uninstall safe-base first."
+        }
+        Move-Item -LiteralPath $slot.OverlayIni -Destination $bk -Force
+        $result.priorIni       = $true
+        $result.priorIniBackup = $bk
+        Write-Host "  - backed up existing LeafOverlay.ini to $bk"
+    }
+
+    Copy-Item -LiteralPath $SourceDll -Destination $slot.VersionDll -Force
+    # Write the INI as ASCII (default Win1252 for GetPrivateProfileStringW).
+    # Avoid UTF-16 to keep the file small and easy to hand-edit; no non-ASCII
+    # content lives in this file (the banner's interpunct is compiled into
+    # the DLL, not read from the INI).
+    $ini = Format-SafeBaseOverlayIni -ExpectedSteamProxySize $ExpectedSteamProxySize
+    [System.IO.File]::WriteAllText($slot.OverlayIni, $ini, [System.Text.Encoding]::ASCII)
+
+    return [pscustomobject]$result
+}
+
+# Reverse Install-VersionOverlay. Refuses to overwrite a foreign version.dll
+# unless the current one matches the SHA we recorded, so a user who swapped
+# in a different build between install and uninstall is protected.
+# Returns a hashtable describing what happened.
+function Restore-VersionOverlay {
+    param(
+        [Parameter(Mandatory)][string]$VersionDllPath,
+        [Parameter(Mandatory)][string]$OverlayIniPath,
+        [Parameter(Mandatory)][string]$ExpectedInstalledSha,
+        [string]$PriorVersionBackup,
+        [string]$PriorIniBackup
+    )
+    $info = @{ versionRestored = $false; iniRestored = $false; parked = $null }
+
+    # --- version.dll ---
+    if (Test-Path -LiteralPath $VersionDllPath) {
+        $curSha = Get-FileSha256 -Path $VersionDllPath
+        if ($curSha -and $ExpectedInstalledSha -and $curSha -eq $ExpectedInstalledSha) {
+            # Ours. Delete and (optionally) put the prior back.
+            Remove-Item -LiteralPath $VersionDllPath -Force
+            if ($PriorVersionBackup -and (Test-Path -LiteralPath $PriorVersionBackup)) {
+                Move-Item -LiteralPath $PriorVersionBackup -Destination $VersionDllPath -Force
+                $info.versionRestored = $true
+            }
+        } else {
+            # Foreign DLL where ours used to be. Park it, keep our backup intact.
+            $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
+            $park  = Join-Path $BackupDir "overlay-version-modified-$stamp.dll"
+            Move-Item -LiteralPath $VersionDllPath -Destination $park -Force
+            Write-Warning "version.dll at '$VersionDllPath' did not match the SHA we installed ($ExpectedInstalledSha). Parked the current file at '$park' and left the prior backup in place."
+            $info.parked = $park
+        }
+    }
+
+    # --- LeafOverlay.ini ---
+    if (Test-Path -LiteralPath $OverlayIniPath) {
+        # INI: no SHA guard, we just remove ours and restore prior if any.
+        # A user who edited the INI has their edits lost - that's OK because
+        # the ini is documentation + knobs, not content.
+        Remove-Item -LiteralPath $OverlayIniPath -Force
+        if ($PriorIniBackup -and (Test-Path -LiteralPath $PriorIniBackup)) {
+            Move-Item -LiteralPath $PriorIniBackup -Destination $OverlayIniPath -Force
+            $info.iniRestored = $true
+        }
+    }
+
+    return $info
+}
+

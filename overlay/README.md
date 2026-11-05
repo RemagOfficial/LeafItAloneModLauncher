@@ -107,6 +107,40 @@ relaunch — **no recompiling**. Every key is optional (defaults shown):
 | `Title` | `Hello, world!` | Big line text. |
 | `Subtitle` | `Leaf it Alone - native overlay` | Small green line text. |
 
+### `[safebase]` section (M4)
+
+The same DLL doubles as safe-base's in-game reporter. When
+`[safebase] Enabled=true`, it draws a **persistent banner across the top
+of the screen** (F9 does NOT hide it) that reads
+`OFFLINE · MODDED PLAY · SCORES WILL NOT BE SUBMITTED`, and runs a
+**one-shot preflight** at game startup from inside the game process:
+
+- file-size check on the Steam proxy at `<game folder>\Leaf it Alone_Data\Plugins\x86_64\steam_api64.dll`,
+- existence check on the Saves/ isolation marker at
+  `%USERPROFILE%\AppData\LocalLow\Eternity\Leaf it Alone\Saves\.safebase-empty`,
+- live non-blocking `connect(1.1.1.1:443)` with a short timeout — the only
+  way to prove the program-scoped firewall rule is actually enforcing, since
+  the rule keys off the *game's* PID (PowerShell scripts testing connectivity
+  would test their own process, not the game's).
+
+If any check fails, the banner turns **red** and shows a compact reason; full
+details go to `LeafOverlay.log`. Safe-base does not police the game after
+this — if you turn the firewall rule off mid-session the banner stays as it
+was drawn at startup, because we deliberately do not add a trip-wire.
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `Enabled` | `false` | Turn the whole M4 layer on. Off by default so standalone HUD users see no change. |
+| `Banner` | `true` | Draw the banner. When false, the preflight still runs (and logs) but nothing is drawn. |
+| `BannerCorner` | `TopCenter` | `TopCenter`, `TopLeft`, `TopRight`, `BottomCenter`. |
+| `BannerMargin` | `14` | Pixels from the anchor edge. |
+| `BannerText` | (empty) | Optional override of the banner string. Empty uses the built-in default. INI encoding is ANSI; non-ASCII needs the file saved as UTF-16 LE. |
+| `CheckSteamProxy` | `true` | Verify steam_api64.dll exists (and matches size if `ExpectedSteamProxySize` non-zero). |
+| `CheckSaveIsolation` | `true` | Verify the `.safebase-empty` marker is in place. |
+| `CheckOutbound` | `true` | Run the live `connect(1.1.1.1:443)` probe. |
+| `ExpectedSteamProxySize` | `0` | Bytes. `install.ps1` fills this in from the proxy size it just placed. `0` disables size comparison. |
+| `ProbeTimeoutMs` | `1500` | Cap on the outbound probe, clamped `100`–`5000`. |
+
 ---
 
 ## How it works

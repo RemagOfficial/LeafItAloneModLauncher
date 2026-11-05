@@ -1,5 +1,5 @@
 # status.ps1 — read-only report of safe-base's state (firewall rule + steam_api64.dll
-# proxy + manifest + registered mods). No admin required.
+# proxy + save isolation + version.dll overlay). No admin required.
 
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\common.ps1"
@@ -135,15 +135,65 @@ if ($m -and $m.saveIsolation) {
     Write-Host "  not installed"
 }
 
+# --- version.dll overlay state (M4) ---
+Write-Host ""
+Write-Host "[M4] Overlay banner layer (version.dll):"
+if ($m -and $m.versionOverlay) {
+    $vdll = $m.versionOverlay.versionDllPath
+    $vini = $m.versionOverlay.overlayIniPath
+    Write-Host "  version.dll    : $vdll"
+    if (Test-Path -LiteralPath $vdll) {
+        $sz = (Get-Item -LiteralPath $vdll).Length
+        $sh = Get-FileSha256 -Path $vdll
+        if ($sh -and $sh -eq $m.versionOverlay.sourceDllSha256) {
+            Write-Host "                   PRESENT, matches installed SHA (safe-base banner active) ($sz bytes)" -ForegroundColor Green
+        } else {
+            Write-Host "                   PRESENT, SHA does NOT match install (a different DLL is in place: $sz bytes)" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "                   MISSING - the game won't show the OFFLINE banner" -ForegroundColor Red
+    }
+    Write-Host "  LeafOverlay.ini: $vini"
+    if (Test-Path -LiteralPath $vini) {
+        $txt = Get-Content -LiteralPath $vini -Raw -ErrorAction SilentlyContinue
+        if ($txt -and $txt -match '(?im)^\s*Enabled\s*=\s*true') {
+            Write-Host "                   PRESENT with [safebase] Enabled=true" -ForegroundColor Green
+        } else {
+            Write-Host "                   PRESENT but [safebase] not Enabled (edits? overlay will draw HUD only)" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "                   MISSING" -ForegroundColor Red
+    }
+    $exp = $m.versionOverlay.expectedProxySize
+    if ($exp) { Write-Host "  expected size  : steam proxy = $exp bytes (checked by overlay at startup)" }
+    if ($m.versionOverlay.priorVersionBackup) {
+        if (Test-Path -LiteralPath $m.versionOverlay.priorVersionBackup) {
+            Write-Host "  prior backup   : present ($($m.versionOverlay.priorVersionBackup))" -ForegroundColor Green
+        } else {
+            Write-Host "  prior backup   : MISSING at $($m.versionOverlay.priorVersionBackup)" -ForegroundColor Red
+        }
+    } else {
+        Write-Host "  prior backup   : n/a (no version.dll was in place at install time)"
+    }
+} elseif ($m) {
+    Write-Host "  manifest has no versionOverlay entry (installed with -SkipOverlay? or pre-M4)" -ForegroundColor Yellow
+} else {
+    Write-Host "  not installed"
+}
+
 # --- verdict ---
 Write-Host ""
 $m1ok = [bool]($state.Rule -and $state.Rule.Enabled -eq 'True' -and $state.FwServiceStat -eq 'Running')
 $m2ok = [bool]($m -and $m.steamProxy -and (Classify-SteamDll -Path $m.steamProxy.realDllPath -ProxySha $m.steamProxy.proxySha256) -eq 'proxy')
 $m3ok = [bool]($m -and $m.saveIsolation -and $m.saveIsolation.backupPath -and (Test-Path -LiteralPath $m.saveIsolation.backupPath))
+$m4ok = [bool]($m -and $m.versionOverlay -and (Test-Path -LiteralPath $m.versionOverlay.versionDllPath) -and (Test-Path -LiteralPath $m.versionOverlay.overlayIniPath))
+$allExpected = $m1ok -and $m2ok -and $m3ok -and $m4ok
 if (-not $m) {
     Write-Host "VERDICT: not installed. Content mods that call Assert-SafeBaseActive will refuse to apply." -ForegroundColor Yellow
+} elseif ($allExpected) {
+    Write-Host "VERDICT: safe-base M1 + M2 + M3 + M4 active. Game's outbound TCP+UDP blocked; SteamAPI_Init fails; Saves/ is isolated with the original safely backed up; version.dll banner runs and reports these states in-game." -ForegroundColor Green
 } elseif ($m1ok -and $m2ok -and $m3ok) {
-    Write-Host "VERDICT: safe-base M1 + M2 + M3 active. Game's outbound TCP+UDP blocked; SteamAPI_Init will fail; Saves/ is isolated with the original safely backed up. Every game-process upload path is closed AND any modded progression writes to a throwaway folder." -ForegroundColor Green
+    Write-Host "VERDICT: M1 + M2 + M3 active, M4 overlay missing or INI absent. The safety layers work but there is no on-screen banner. Fix: re-run install.ps1 with -SkipOverlay unset, or copy version.dll + LeafOverlay.ini back into the game folder." -ForegroundColor Yellow
 } elseif ($m1ok -and $m2ok) {
     Write-Host "VERDICT: safe-base M1 + M2 active, but M3 is not (backup missing or -SkipSaves install). Steamworks and web-service uploads are blocked, but modded play still writes to your real save. Fix: re-run install.ps1 without -SkipSaves, or run uninstall and reinstall." -ForegroundColor Yellow
 } elseif ($m1ok) {

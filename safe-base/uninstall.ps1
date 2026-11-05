@@ -1,6 +1,8 @@
 # uninstall.ps1 — reverses safe-base:
 #   * Refuses if Leaf it Alone is running (never mutate live files).
-#   * Restores the game's real Saves/ folder first (the modded Saves/ is
+#   * Restores the version.dll overlay FIRST (removes safe-base's version.dll +
+#     LeafOverlay.ini; puts back any pre-existing pair that install backed up).
+#   * Then restores the game's real Saves/ folder (the modded Saves/ is
 #     PARKED under %LOCALAPPDATA%\LeafItAloneSafe\backup\saves-modded-<ts>\,
 #     never deleted, so nothing is lost).
 #   * Then restores the real steam_api64.dll from backup.
@@ -28,6 +30,9 @@ if (-not (Test-IsAdmin)) {
     if (-not $Yes) {
         Write-Host ""
         Write-Host "This will:"
+        Write-Host "  - remove safe-base's version.dll + LeafOverlay.ini from the"
+        Write-Host "    game folder (restoring any prior pair that install backed"
+        Write-Host "    up under $BackupDir\overlay\)"
         Write-Host "  - restore the game's real Saves/ folder (modded Saves/ is"
         Write-Host "    PARKED under $BackupDir\saves-modded-<ts>\, never deleted)"
         Write-Host "  - restore the real steam_api64.dll (from backup)"
@@ -54,7 +59,7 @@ if ($haveManifest) {
 # ---- game-running guard (never mutate live files) ----
 $running = Get-Process -Name 'Leaf it Alone' -ErrorAction SilentlyContinue
 if ($running) {
-    Write-Error "Leaf it Alone is running (PID(s): $($running.Id -join ', ')). Close the game before uninstalling safe-base. Modded saves may still be in use."
+    Write-Error "Leaf it Alone is running (PID(s): $($running.Id -join ', ')). Close the game before uninstalling safe-base. Modded saves may still be in use and version.dll is loaded by the process."
     if ($Elevated) { Read-Host "Press Enter to close" | Out-Null }
     exit 6
 }
@@ -70,6 +75,12 @@ if (-not $Yes) {
     Write-Host ""
     Write-Host "Removing safe-base."
     $n = 0
+    if ($m -and $m.versionOverlay) {
+        $n++
+        Write-Host "  $n. Restore pre-existing version.dll + LeafOverlay.ini (if install backed any up), otherwise remove ours."
+        Write-Host "      target : $($m.versionOverlay.versionDllPath)"
+        Write-Host "               $($m.versionOverlay.overlayIniPath)"
+    }
     if ($m -and $m.saveIsolation) {
         $n++
         Write-Host "  $n. Restore Saves/ from backup (modded Saves/ is parked, never deleted)."
@@ -93,7 +104,39 @@ if (-not $Yes) {
     if ($reply -ne 'YES') { Write-Host "aborted"; exit 0 }
 }
 
-# ---- STEP 1: restore Saves/ (park modded, never delete) ----
+# ---- STEP 1: restore version.dll + LeafOverlay.ini (M4) ----
+if ($m -and $m.versionOverlay) {
+    Write-Host "[M4] Restoring overlay slot (version.dll + LeafOverlay.ini)..." -ForegroundColor Cyan
+    try {
+        $r = Restore-VersionOverlay `
+            -VersionDllPath        $m.versionOverlay.versionDllPath `
+            -OverlayIniPath        $m.versionOverlay.overlayIniPath `
+            -ExpectedInstalledSha  $m.versionOverlay.sourceDllSha256 `
+            -PriorVersionBackup    $m.versionOverlay.priorVersionBackup `
+            -PriorIniBackup        $m.versionOverlay.priorIniBackup
+        if ($r.versionRestored) {
+            Write-Host "       restored the pre-existing version.dll install backed up at $($m.versionOverlay.priorVersionBackup)"
+        } elseif ($r.parked) {
+            Write-Warning "current version.dll was not ours; parked at $($r.parked). Prior backup remains at $($m.versionOverlay.priorVersionBackup)."
+        } else {
+            Write-Host "       removed our version.dll (no prior install existed)"
+        }
+        if ($r.iniRestored) {
+            Write-Host "       restored the pre-existing LeafOverlay.ini"
+        } else {
+            Write-Host "       removed our LeafOverlay.ini"
+        }
+    } catch {
+        Write-Error "M4 restore failed: $($_.Exception.Message)"
+        Write-Host "Backing off before touching other layers. Files are unchanged; investigate and retry."
+        if ($Elevated) { Read-Host "Press Enter to close" | Out-Null }
+        exit 8
+    }
+} else {
+    Write-Host "[M4] No versionOverlay entry in manifest; nothing to restore." -ForegroundColor Yellow
+}
+
+# ---- STEP 2: restore Saves/ (park modded, never delete) ----
 if ($m -and $m.saveIsolation) {
     Write-Host "[M3] Restoring Saves/ (parking any modded data)..." -ForegroundColor Cyan
     try {
@@ -116,7 +159,7 @@ if ($m -and $m.saveIsolation) {
     Write-Host "[M3] No saveIsolation entry in manifest; nothing to restore." -ForegroundColor Yellow
 }
 
-# ---- STEP 2: restore real steam_api64.dll ----
+# ---- STEP 3: restore real steam_api64.dll ----
 if ($m -and $m.steamProxy) {
     Write-Host "[M2] Restoring real steam_api64.dll..." -ForegroundColor Cyan
     $ok = Restore-SteamProxy `
@@ -132,7 +175,7 @@ if ($m -and $m.steamProxy) {
     Write-Host "[M2] No steam_proxy entry in manifest; nothing to restore." -ForegroundColor Yellow
 }
 
-# ---- STEP 3: remove firewall rule (LAST, so file state is vanilla first) ----
+# ---- STEP 4: remove firewall rule (LAST, so file state is vanilla first) ----
 $state = Get-FirewallState
 if ($state.Rule) {
     Write-Host "[M1] Removing firewall rule..." -ForegroundColor Cyan
@@ -142,7 +185,7 @@ if ($state.Rule) {
     Write-Host "[M1] Rule '$RuleName' was not present (nothing to remove)." -ForegroundColor Yellow
 }
 
-# ---- STEP 4: remove manifest ----
+# ---- STEP 5: remove manifest ----
 if ($haveManifest) {
     Remove-Item -LiteralPath $ManifestPath -Force
     Write-Host "       removed: $ManifestPath"

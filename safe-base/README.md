@@ -1,30 +1,38 @@
 # `safe-base/` — Offline-safety framework
 
-**Status: M1 + M2 + M3 landed and in-game tested (2026-11-05). The three
-layers close every upload path the game process can initiate AND keep modded
-progression off your real save. M4-M6 (banner overlay + `connect()` probe, PS
-SDK, first content mod) are still planned; roadmap at the bottom.**
+**Status: M1 + M2 + M3 + M4 landed. M1, M2 and M3 are in-game tested
+(2026-11-05). M4 adds the persistent OFFLINE banner and a one-shot in-game
+startup probe (the outbound `connect(1.1.1.1:443)` test only makes sense
+from inside the game's own process). Together the four layers close every
+upload path the game process can initiate AND keep modded progression off
+your real save AND show you at a glance that the safety is active. M5-M6
+(PS SDK, first content mod) are still planned; roadmap at the bottom.**
 
 Install this **before** any mod in `../content-mods/`.
 
-## Quick start (M1 + M2 + M3)
+## Quick start (M1 + M2 + M3 + M4)
 
 ```powershell
 # 1. Adds a Windows Firewall OUTBOUND-BLOCK rule for Leaf it Alone.exe.
 # 2. Replaces steam_api64.dll with a stub proxy (real one backed up).
 # 3. Moves the game's Saves/ folder to a timestamped backup and creates an
 #    empty placeholder so modded play writes to a throwaway save.
+# 4. Drops the OFFLINE-banner version.dll overlay (any existing version.dll
+#    is backed up, not deleted) with [safebase] Enabled=true so it probes
+#    the three preconditions from inside the game process at startup.
 # Self-elevates via UAC; asks for confirmation ("YES") first. Refuses if the
 # game is currently running.
 .\safe-base\install.ps1
 
 # Read-only report: firewall rule state, Steam proxy state, save-isolation
-# state, backup integrity, manifest, registered mods.
+# state, overlay banner slot + SHA + Enabled flag, backup integrity, manifest,
+# registered mods.
 .\safe-base\status.ps1
 
-# Restores Saves/ first (the modded Saves/ is PARKED, never deleted), then
-# the real steam_api64.dll, then removes the firewall rule LAST. Refuses if
-# the game is running.
+# Restores overlay first (any pre-existing version.dll comes back; a foreign
+# DLL dropped in after us is parked, never deleted), then Saves/ (modded
+# parked), then the real steam_api64.dll, then removes the firewall rule LAST.
+# Refuses if the game is running.
 .\safe-base\uninstall.ps1
 ```
 
@@ -34,6 +42,9 @@ Overrides:
 - Save path (rare): `install.ps1 -SavePath "..."`
 - Skip Steam proxy (M1-only testing): `install.ps1 -SkipSteam`
 - Skip save isolation (M1+M2-only testing): `install.ps1 -SkipSaves`
+- Skip overlay banner install (M1+M2+M3-only testing, or if you already run
+  the standalone overlay and just want the safety layers around it):
+  `install.ps1 -SkipOverlay`
 - Fresh install where Saves/ doesn't exist yet: `install.ps1 -AllowMissingSaves`
 
 **Important for M3:** if the game has Steam Cloud enabled (safe-base detects
@@ -60,9 +71,9 @@ days later**. Blocking alone isn't a guarantee.
 
 ## What `safe-base/` does
 
-*(Below is the full framework design. **M1 + M2 + M3 = steps 1, 2 and 3.**
-The other steps arrive as M4-M5 land; each milestone is independently
-testable.)*
+*(Below is the full framework design. **M1 + M2 + M3 + M4 = steps 1, 2, 3
+and 4.** Step 5 (the `base.psm1` SDK + content-mod registry) arrives with
+M5; each milestone is independently testable.)*
 
 On install, `install.ps1` (self-elevating):
 
@@ -74,8 +85,7 @@ On install, `install.ps1` (self-elevating):
    `%LOCALAPPDATA%\LeafItAloneSafe\manifest.json`.
    - The live outbound `connect(1.1.1.1:443)` probe that a PowerShell script
      can't perform (firewall rules only affect the target program's traffic)
-     ships at **M4** inside the `version.dll` mod, where the probe runs
-     *from the game process itself*.
+     runs **at M4** inside `version.dll`, from the game process itself.
 2. **[M2 landed]** Locates the game's real `steam_api64.dll`, moves it to
    `%LOCALAPPDATA%\LeafItAloneSafe\backup\steam_api64.dll`, and drops the
    auto-generated **stub proxy** from `steam_proxy/` in its place. Every
@@ -99,17 +109,33 @@ On install, `install.ps1` (self-elevating):
    edits Steam's own config). Any modded play now writes to a throwaway save.
    - Override with `-SkipSaves` if you only want M1+M2. If Saves/ doesn't
      exist yet (never played), pass `-AllowMissingSaves`.
-4. Drops a `version.dll` overlay (built from the same code family as
-   `../overlay/leaf_overlay.cpp`) that:
-   - Re-checks all three preconditions at startup **and** every ~30 s,
-     plus on hotkey press.
-   - **Refuses to draw anything** if any precondition fails; a Windows
-     MessageBox explains which one broke and how to fix it.
-   - Draws a persistent banner:
-     `OFFLINE · MODDED PLAY · SCORES WILL NOT BE SUBMITTED`.
-5. Writes `%LOCALAPPDATA%\LeafItAloneSafe\manifest.json` (install timestamp,
-   backup paths, sentinel hash, list of applied content mods) and
-   `base.psm1` — the SDK content mods import.
+4. **[M4 landed]** Merges the OFFLINE banner and a startup preflight probe
+   into the same `version.dll` the standalone overlay ships (`../overlay/
+   version.dll`). If a `version.dll` and/or `LeafOverlay.ini` already exist
+   in the game folder (e.g. from a prior overlay install), they're moved to
+   `%LOCALAPPDATA%\LeafItAloneSafe\backup\overlay\`. Our build is copied in
+   and a fresh `LeafOverlay.ini` is written with `[safebase] Enabled=true`
+   and `ExpectedSteamProxySize=<size M2 just installed>`.
+   On first game launch, `version.dll` (running inside `Leaf it Alone.exe`)
+   draws a **persistent top-centre banner**
+   `OFFLINE · MODDED PLAY · SCORES WILL NOT BE SUBMITTED` that F9 does NOT
+   hide, and runs a **one-shot** preflight:
+   (a) the on-disk `steam_api64.dll` matches the expected proxy size,
+   (b) the `.safebase-empty` marker exists at the isolated Saves/ path,
+   (c) a non-blocking `connect(1.1.1.1:443)` **times out** (which proves the
+       program-scoped firewall rule is enforcing for THIS process).
+   If all three pass the banner is green; any failure turns it red with a
+   compact reason on the strip. We deliberately do **not** terminate the
+   process, show a MessageBox, or hide the HUD on failure — a persistent
+   visible warning plus a red state is enough. If a user manually removes
+   the firewall rule mid-session, that's their call; we don't re-probe
+   periodically.
+   - Override with `-SkipOverlay` if you want M1-M3 only, or if you already
+     run the standalone overlay and want safe-base to leave the slot alone.
+5. **[M5 planned]** Writes `%LOCALAPPDATA%\LeafItAloneSafe\manifest.json`
+   (install timestamp, backup paths, sentinels, list of applied content mods)
+   and `base.psm1` — the SDK content mods import. *(The manifest itself
+   landed early; only `base.psm1` and the content-mod registry are pending.)*
 
 On uninstall, `uninstall.ps1`:
 
@@ -117,23 +143,30 @@ On uninstall, `uninstall.ps1`:
    reverts them first, then does this; the guard fires from M5 when the
    registry fills up).
 2. Refuses if the game process is currently running.
-3. **[M3 landed]** Restores the vanilla `Saves/` first. Any modded `Saves/`
+3. **[M4 landed]** Restores the overlay slot FIRST: our `version.dll` is
+   deleted and the prior backup (if any) is moved back into place; a fresh
+   standalone-overlay install thus comes back before anything else changes.
+   If what's at the slot now **isn't** our recorded SHA (e.g. the user built
+   their own overlay over ours), the current DLL and INI are **parked** at
+   `%LOCALAPPDATA%\LeafItAloneSafe\backup\overlay-version-modified-<ts>.dll`
+   — never deleted — and the prior backup is restored.
+4. **[M3 landed]** Restores the vanilla `Saves/`. Any modded `Saves/`
    present is **parked** as
    `%LOCALAPPDATA%\LeafItAloneSafe\backup\saves-modded-<ts>\` — never
    deleted, so nothing is lost even if you want to keep exploring a modded
    run later. If the current `Saves/` only holds the empty placeholder (never
    played), it's removed cleanly.
-4. **[M2 landed]** Restores the real `steam_api64.dll` (refusing if what's
+5. **[M2 landed]** Restores the real `steam_api64.dll` (refusing if what's
    at that path now isn't our recorded proxy).
-5. Removes `version.dll`, `LeafOverlay.ini`. *(M4)*
-6. Removes the firewall rule. **Last** — the network stays blocked until the
-   file state is fully vanilla again.
+6. **[M1 landed]** Removes the firewall rule. **Last** — the network stays
+   blocked until the file state is fully vanilla again.
 7. Removes the manifest.
 
-The mod `version.dll` **cannot run without all the surrounding safety
-pieces** — so if the user manually drops files in and out of order, the mod
-just doesn't activate. The framework is not a set of independent scripts
-someone can half-apply.
+The overlay **will run** even when preconditions fail — it just draws a red
+banner with the reason instead of a green one. We deliberately leave that
+call with the user: the banner is a loud, in-your-face warning, not a
+kill switch. If you see red, safe-base wants you to stop playing and
+reinstall.
 
 ## SDK content mods use (`base.psm1`)
 
@@ -152,15 +185,15 @@ need to duplicate any safety code.
 
 | Command | Status | What it does |
 |---|---|---|
-| `install.ps1` | **M1 + M2 + M3 landed** | Firewall rule + Steam proxy + save isolation + verify + manifest. Self-elevates. Refuses if the game is running. Rolls back earlier steps if a later one fails. New flags: `-SavePath`, `-SkipSaves`, `-AllowMissingSaves`. |
-| `uninstall.ps1` | **M1 + M2 + M3 landed** | Refuses if the game is running. Restores Saves/ first (modded parked, never deleted), then the real `steam_api64.dll`, then removes the firewall rule LAST. Refuses if content mods are still applied (guard is live; registry fills up in M5). |
-| `status.ps1` | **M1 + M2 + M3 landed** | Read-only: firewall rule + service + Steam-proxy class (proxy / real / absent / unknown) + save-isolation state (isolated / active / missing / n/a) + backup integrity + Steam Cloud rehydration warning + manifest + registered mods. No admin. |
-| `common.ps1` | shared | Dot-sourced helpers. M1: `Find-GameExe`, `Test-IsAdmin`, `Get-FirewallState`. M2: `Find-GameSteamDll`, `Install-SteamProxy`, `Restore-SteamProxy`, `Classify-SteamDll`, `Get-FileSha256`, `Get-GameFolderFromExe`. M3: `Find-GameSaveFolder`, `Get-SaveFolderStats`, `Test-SteamCloudMarker`, `Install-SaveIsolation`, `Restore-SaveIsolation`. Constants: rule name/display/description, state dir, manifest path, backup dir, `SteamProxySource`, `SaveRelSegments`, `SteamCloudMarker`. |
+| `install.ps1` | **M1 + M2 + M3 + M4 landed** | Firewall rule + Steam proxy + save isolation + overlay banner slot + verify + manifest. Self-elevates. Refuses if the game is running. Rolls back earlier steps if a later one fails. Flags: `-SavePath`, `-SkipSaves`, `-SkipOverlay`, `-AllowMissingSaves`. |
+| `uninstall.ps1` | **M1 + M2 + M3 + M4 landed** | Refuses if the game is running. Restores the overlay slot FIRST (any prior version.dll comes back; a foreign DLL is parked, never deleted), then Saves/ (modded parked), then the real `steam_api64.dll`, then removes the firewall rule LAST. Refuses if content mods are still applied (guard is live; registry fills up in M5). |
+| `status.ps1` | **M1 + M2 + M3 + M4 landed** | Read-only: firewall rule + service + Steam-proxy class (proxy / real / absent / unknown) + save-isolation state (isolated / active / missing / n/a) + overlay slot state (present / SHA match / `[safebase] Enabled` / prior backup integrity) + backup integrity + Steam Cloud rehydration warning + manifest + registered mods. No admin. |
+| `common.ps1` | shared | Dot-sourced helpers. M1: `Find-GameExe`, `Test-IsAdmin`, `Get-FirewallState`. M2: `Find-GameSteamDll`, `Install-SteamProxy`, `Restore-SteamProxy`, `Classify-SteamDll`, `Get-FileSha256`, `Get-GameFolderFromExe`. M3: `Find-GameSaveFolder`, `Get-SaveFolderStats`, `Test-SteamCloudMarker`, `Install-SaveIsolation`, `Restore-SaveIsolation`. M4: `Find-GameOverlaySlot`, `Format-SafeBaseOverlayIni`, `Install-VersionOverlay`, `Restore-VersionOverlay`. Constants: rule name/display/description, state dir, manifest path, backup dir, `SteamProxySource`, `SaveRelSegments`, `SteamCloudMarker`, `OverlaySourceDll`. |
 | `steam_proxy/generate_proxy.ps1` | **M2 landed** | Regenerates `steam_proxy.cpp` + `steam_proxy.def` from `exports.txt`. Deterministic; only rerun if the game's SDK changes its export set. |
 | `steam_proxy/build_steam_proxy.ps1` | **M2 landed** | Compiles `steam_proxy.cpp` → `steam_api64.dll` (162 KB stub proxy). Ships prebuilt so end users don't need MSVC. |
 | `steam_proxy/exports.txt` | M2 source of truth | 1089 export names captured from the game's current `steam_api64.dll`. |
+| `../overlay/leaf_overlay.cpp` | **M4 landed (shared with overlay)** | The persistent-banner overlay + one-shot startup probe. Same DLL is the standalone HUD overlay and safe-base's in-game reporter; behaviour switches on `[safebase] Enabled=` in `LeafOverlay.ini`. Built by `../overlay/build_overlay.ps1`, prebuilt at `../overlay/version.dll`. |
 | `uninstall-all.ps1` | M5 | Revert every registered content mod, then uninstall. |
-| `recheck.ps1` | M4 | Re-run the precondition probe from inside the game process. |
 | `base.psm1` | M5 | SDK content mods import. |
 
 ## Roadmap
@@ -252,68 +285,107 @@ Delivered one milestone at a time, each independently testable before the next.
      game one more time - your vanilla progression should be exactly what
      you had before all of this.
   9. `status.ps1` -> "not installed".
-- **M4 (planned)** — Persistent banner + startup preconditions, merged into
-  the existing `../overlay/version.dll` (one DLL, HUD and safety share a
-  binary; `LeafOverlay.ini` decides what draws). When `[safebase] Enabled` is
-  true the overlay draws a non-hideable banner ("OFFLINE · MODDED PLAY ·
-  SCORES WILL NOT BE SUBMITTED") and runs a **one-shot** startup check from
-  inside the game process: file-size match on the Steam proxy, presence of
-  the `Saves/` isolation marker, and a live `connect(1.1.1.1:443)` probe (a
-  program-scoped firewall rule can only be measured from the exe it scopes
-  to, so the probe is genuinely informative in-DLL and not from `status.ps1`).
-  If any check fails the banner turns red and the details go to
-  `LeafOverlay.log`. We do **not** terminate the game or block play: a user
-  who manually breaks a precondition is responsible for their own choices;
-  safe-base only surfaces what its install did. `install.ps1` drops
-  `version.dll` + `LeafOverlay.ini` (backing up any existing overlay install
-  first, same pattern as `steam_api64.dll`).
+- **M4 - LANDED** (in-game test pending) — Persistent OFFLINE banner and a
+  one-shot in-game startup probe, both merged into the same `version.dll`
+  the overlay example ships (`../overlay/version.dll`; a `[safebase]` INI
+  section controls behaviour). On install, safe-base backs up any existing
+  `version.dll` and `LeafOverlay.ini` in the game folder to
+  `%LOCALAPPDATA%\LeafItAloneSafe\overlay\`, drops the current build of
+  `version.dll` and writes a fresh `LeafOverlay.ini` with
+  `[safebase] Enabled=true` and `ExpectedSteamProxySize=<size M2 just
+  installed>`. On first launch the DLL, running inside `Leaf it Alone.exe`,
+  draws a persistent top-centre banner ("OFFLINE · MODDED PLAY · SCORES
+  WILL NOT BE SUBMITTED") that F9 does NOT hide, and verifies:
+  (a) `steam_api64.dll` in the game's Plugins folder matches that size,
+  (b) `.safebase-empty` exists at the Saves/ path,
+  (c) a live non-blocking `connect(1.1.1.1:443)` with a 1.5 s timeout does
+  **not** complete (which is the only meaningful way to prove the
+  program-scoped firewall rule for THIS process is enforcing — PowerShell
+  cannot test this because a program-scoped rule only affects its own
+  process). If all three pass the banner stays green; any failure turns it
+  red and shows a compact reason. We deliberately do **not** add a
+  trip-wire: if a user manually removes the rule mid-session, that is their
+  choice. `uninstall.ps1` restores `version.dll` and `LeafOverlay.ini`
+  **first** (before touching Saves/, DLL or rule) so any pre-existing overlay
+  install comes back before anything else changes. Manifest `schemaVersion`
+  bumped 3 -> 4 with a new `versionOverlay` block (`sourceDllSha256`,
+  `expectedProxySize`, prior backups). `status.ps1` reports the overlay
+  slot state (present / SHA match / Enabled / prior backup integrity). New
+  flag: `-SkipOverlay`. Test plan:
+  1. Close the game (safe-base refuses if it's running).
+  2. `install.ps1` -> UAC -> confirm -> watch M1 + M2 + M3 + M4 phases.
+     `[M4] Installing persistent-banner overlay (version.dll)...` and
+     `startup check will expect steam_api64.dll size = N bytes`.
+  3. `status.ps1` -> `[M4] Overlay banner layer (version.dll): PRESENT,
+     matches installed SHA`, `LeafOverlay.ini: PRESENT with [safebase]
+     Enabled=true`, verdict `M1 + M2 + M3 + M4 active`.
+  4. Launch the game. Within a couple of seconds a **green**
+     `OFFLINE · MODDED PLAY · SCORES WILL NOT BE SUBMITTED` strip should
+     appear at top-centre of the screen, above (or alongside) the existing
+     HUD panel in the top-left.
+  5. Press F9. The HUD panel toggles, but the OFFLINE banner STAYS.
+  6. Optional negative test: while the game is running, open `wf.msc`,
+     find `Leaf it Alone Safe (block outbound - modding)` and set Enabled
+     = false. Restart the game. The banner should turn **red** and show
+     `outbound NOT blocked` on the strip. This is expected — the check only
+     runs at startup, so you need a fresh launch. Do NOT continue playing
+     like this. Restore the rule and re-enable safe-base before playing.
+  7. `uninstall.ps1` -> refuses if game running; else restores version.dll +
+     INI first, then Saves/ (parking modded), then steam_api64.dll, then
+     removes the firewall rule last.
+  8. Verify manually: the game folder no longer has a `version.dll` or
+     `LeafOverlay.ini` you did not have before install (any pre-existing
+     pair was put back by STEP 1 of uninstall).
+  9. `status.ps1` -> "not installed".
 - **M5** — `base.psm1` SDK + registry + `uninstall-all.ps1` + `recheck.ps1`.
 - **M6** — First content mod (`bag-capacity`) as the SDK's real test.
 
-## Leak paths — what M1 + M2 + M3 block vs what's left
+## Leak paths — what M1 + M2 + M3 + M4 block vs what's left
 
 Leaf it Alone ships both `com.rlabrecque.steamworks.net.dll` (Steamworks) and
 `UnityWebRequestModule.dll` (the game's own HTTP client). Two upload paths,
-plus save-mediated re-uploads. Three mitigations.
+plus save-mediated re-uploads. Four mitigations, the last of which is a
+verifier and reporter rather than another blocker.
 
-| Leak path | How it works | M1 (firewall) | M2 (proxy) | M3 (save isolation) | What closes it |
-|---|---|---|---|---|---|
-| Game → its own web service (HTTPS via `UnityWebRequest`) | `Leaf it Alone.exe` opens a direct TCP+TLS connection to a dev-hosted endpoint | ✅ blocked (SYN dies) | n/a | n/a | **M1** |
-| Game → Steam leaderboard upload (`UploadLeaderboardScore`) | Game calls `steam_api64.dll` → loopback IPC → `Steam.exe` → HTTPS | ❌ (Steam's exe isn't the rule target; loopback unfiltered) | ✅ blocked, **tested in-game 2026-11-05** (leaderboard renders empty) | n/a | **M2** |
-| Game → Steam stats / achievements (`SetStat`, `SetAchievement`) | Same as above | ❌ | ✅ blocked | n/a | **M2** |
-| Steam Cloud save sync (game-mediated) | Game enters cloud-enabled state and hands files to Steam client for push | ❌ | ✅ blocked (init fail means game never enters cloud state) | ✅ belt-and-braces (Saves/ moved aside, marker file travels with backup) | **M2 + M3** |
-| Steam Cloud rehydration (client-mediated) | Steam client pushes or pulls files at the Saves/ path independently of the game | ❌ | ❌ (proxy doesn't reach into Steam's own sync scheduler) | ⚠️ mitigated (fresh empty Saves/ has no cloud identity, but if Steam has a cached cloud copy it may still sync files back into the placeholder) | **M3 manual cloud-disable prompt** (safe-base does not edit Steam's config; you click it off) |
-| Save file re-upload on next online launch (queued or embedded submissions) | Uninstall → play vanilla on the same save → the game (or Steam) resubmits what's in the save | ❌ | ❌ (proxy's gone after uninstall) | ✅ closes it - modded Saves/ is parked outside the game path, so vanilla play after uninstall uses the pre-install save, which never saw the mod | **M3** |
-| Rule silently removed while game is running (VPN resets firewall, group policy, malware, user tinkering) | Game keeps playing but block is gone | ❌ (no trip-wire) | ❌ (DLL file is still our proxy, so Steam uploads stay blocked, but the web-service path reopens) | ❌ (Saves/ isolation is file-based and unaffected by rule state, but new modded writes still go into the isolated Saves/ - fine) | **Accepted risk.** safe-base does not police the user's own machine after install. The M4 banner runs a one-shot outbound probe at startup and reflects the state install left behind. If you turn the rule off mid-session, that's your call. Reinstall (or `status.ps1`) re-verifies. |
+| Leak path | How it works | M1 (firewall) | M2 (proxy) | M3 (save isolation) | M4 (banner + startup probe) | What closes it |
+|---|---|---|---|---|---|---|
+| Game → its own web service (HTTPS via `UnityWebRequest`) | `Leaf it Alone.exe` opens a direct TCP+TLS connection to a dev-hosted endpoint | ✅ blocked (SYN dies) | n/a | n/a | 🔍 outbound probe verifies block at launch | **M1** (M4 proves it) |
+| Game → Steam leaderboard upload (`UploadLeaderboardScore`) | Game calls `steam_api64.dll` → loopback IPC → `Steam.exe` → HTTPS | ❌ (Steam's exe isn't the rule target; loopback unfiltered) | ✅ blocked, **tested in-game 2026-11-05** (leaderboard renders empty) | n/a | 🔍 size-check verifies proxy at launch | **M2** (M4 proves it) |
+| Game → Steam stats / achievements (`SetStat`, `SetAchievement`) | Same as above | ❌ | ✅ blocked | n/a | 🔍 same as above | **M2** |
+| Steam Cloud save sync (game-mediated) | Game enters cloud-enabled state and hands files to Steam client for push | ❌ | ✅ blocked (init fail means game never enters cloud state) | ✅ belt-and-braces (Saves/ moved aside, marker file travels with backup) | 🔍 marker-file check verifies isolation at launch | **M2 + M3** (M4 proves it) |
+| Steam Cloud rehydration (client-mediated) | Steam client pushes or pulls files at the Saves/ path independently of the game | ❌ | ❌ (proxy doesn't reach into Steam's own sync scheduler) | ⚠️ mitigated (fresh empty Saves/ has no cloud identity, but if Steam has a cached cloud copy it may still sync files back into the placeholder) | ⚠️ marker check would fail if Steam Cloud overwrote placeholder with a real save between launches | **M3 manual cloud-disable prompt** (safe-base does not edit Steam's config; you click it off) |
+| Save file re-upload on next online launch (queued or embedded submissions) | Uninstall → play vanilla on the same save → the game (or Steam) resubmits what's in the save | ❌ | ❌ (proxy's gone after uninstall) | ✅ closes it - modded Saves/ is parked outside the game path, so vanilla play after uninstall uses the pre-install save, which never saw the mod | n/a (only meaningful while modded) | **M3** |
+| Rule silently removed while game is running (VPN resets firewall, group policy, malware, user tinkering) | Game keeps playing but block is gone | ❌ (no trip-wire) | ❌ (DLL file is still our proxy, so Steam uploads stay blocked, but the web-service path reopens) | ❌ (Saves/ isolation is file-based and unaffected by rule state, but new modded writes still go into the isolated Saves/ - fine) | ⚠️ **detects at next launch**, not mid-session — the outbound probe only runs once at game start. If you turn the rule off mid-play, no banner change until you relaunch | **Accepted risk** by design. If a user manually unblocks, that's their call. The banner makes the current state visible at every launch. |
 
-**The takeaway after M3:** every network call the *game process* can initiate
-is stopped (M1 + M2), and modded progression is written to a throwaway save
-that never touches your real one (M3). The remaining leaks are:
+**The takeaway after M4:** every network call the *game process* can initiate
+is stopped (M1 + M2), modded progression is written to a throwaway save
+that never touches your real one (M3), and a persistent in-game banner
+proves the state at every launch (M4). The remaining leaks are:
 - Steam client's **own** cloud rehydration into the isolated `Saves/` (rare,
   only if you don't disable Steam Cloud when prompted) — M3's install-time
   warning + `status.ps1` rehydration check.
-- Firewall rule or proxy DLL tampering **during a session** — accepted risk.
-  M4's startup banner verifies state once when the game starts and shows
-  red/green; we don't police manual changes mid-play.
+- Firewall rule or proxy DLL tampering **during a session** — accepted risk
+  by design. M4's banner is a startup verifier + always-visible reporter,
+  not a trip-wire. We don't police manual changes mid-play.
 
-## What M1 + M2 + M3 don't do yet
+## What M1 + M2 + M3 + M4 don't do yet
 
-- Show the user at a glance that they're playing safely — ❌ **no**, M4
-  (persistent banner drawn from inside the game process).
-- Prove outbound is blocked from the game's own process (a PowerShell
-  `Test-NetConnection` tests PowerShell, not the game) — ❌ **no**, M4
-  (live `connect(1.1.1.1:443)` at startup).
 - Programmatically disable Steam Cloud (edits `localconfig.vdf`) — deferred
   behind a manual prompt for now; revisit if the rehydration case shows up.
+- Re-run the precondition probe periodically or on hotkey — deliberately
+  **no** by design. M4 is a startup check only; a persistent visible banner
+  reflects the state the check found. If a user changes the rule mid-session,
+  the banner is stale until next launch. This is intentional: safe-base does
+  not treat the user as an adversary.
 - The `base.psm1` SDK content mods use — ❌ **no**, M5.
 
-Until M5 lands, no content mod is safe to distribute. But M1 + M2 + M3
+Until M5 lands, no content mod is safe to distribute. But M1 + M2 + M3 + M4
 together mean the *safety story is real* for a user who manually applies a
 bundle edit in their own install for personal play. Use `../overlay/` in the
 meantime (cosmetic only, does not touch gameplay, and therefore does not need
 the safety framework).
 
-## Requirements (for M1 + M2 + M3)
+## Requirements (for M1 + M2 + M3 + M4)
 - Windows x64, *Leaf it Alone* on Steam (you must own the game).
 - Admin PowerShell for the firewall rule (self-elevates via `Start-Process -Verb RunAs`).
 - Game process closed on install and uninstall (safe-base refuses if
@@ -321,5 +393,8 @@ the safety framework).
 - **For M3 with Steam Cloud enabled:** disable it manually for the game
   before playing modded. safe-base will warn you at install time if the
   marker is present.
-- Later milestones add: the game in **borderless / windowed** mode (M4
-  overlay), Python 3.12 + UnityPy for content mods (M6).
+- **For M4:** the game must run in **borderless / windowed** mode (Unity's
+  `FullScreenWindow` displayMode). Exclusive fullscreen will not composite
+  the topmost overlay window. The vanilla game ships borderless, so this
+  is normally already satisfied.
+- Later milestones add: Python 3.12 + UnityPy for content mods (M6).

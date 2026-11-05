@@ -1,5 +1,6 @@
 # install.ps1 — safe-base: verified Windows Firewall outbound-block (M1) +
-# steam_api64.dll stub proxy (M2) + save isolation (M3) for Leaf it Alone.
+# steam_api64.dll stub proxy (M2) + save isolation (M3) + version.dll overlay
+# with persistent banner and one-shot preconditions (M4) for Leaf it Alone.
 #
 # What it does:
 #   1. Auto-detects Leaf it Alone.exe (override with -GameExe "C:\...\Leaf it Alone.exe").
@@ -18,12 +19,19 @@
 #      Steam Cloud marker file (steam_autocloud.vdf) travels with the backup,
 #      which means the modded play has no cloud identity to sync against.
 #      Warns about Steam Cloud if the marker was present. (M3)
-#   9. Writes an install manifest at %LOCALAPPDATA%\LeafItAloneSafe\manifest.json
+#   9. Drops ../overlay/version.dll into the game folder root and writes a
+#      matching LeafOverlay.ini with [safebase] Enabled=true. The overlay
+#      then draws a persistent "OFFLINE · MODDED PLAY · SCORES WILL NOT BE
+#      SUBMITTED" banner in-game and runs a startup preflight (proxy DLL size,
+#      Saves/ isolation marker, live connect(1.1.1.1:443) probe). Any prior
+#      version.dll / LeafOverlay.ini in the game folder is backed up and
+#      restored on uninstall. (M4)
+#  10. Writes an install manifest at %LOCALAPPDATA%\LeafItAloneSafe\manifest.json
 #      recording everything needed to reverse the install.
 #
-# Any step 6-9 failure triggers a rollback of prior steps (proxy removed,
-# firewall rule removed, Saves/ restored if we got that far). Nothing is left
-# half-installed.
+# Any step 6-10 failure triggers a rollback of prior steps (overlay + proxy
+# removed, firewall rule removed, Saves/ restored if we got that far). Nothing
+# is left half-installed.
 #
 # Reversible: run uninstall.ps1. Requires admin (self-elevates).
 
@@ -35,6 +43,7 @@ param(
     [switch]$Elevated,       # internal: set when re-launched as admin
     [switch]$SkipSteam,      # M1-only install, for debugging (does not drop proxy)
     [switch]$SkipSaves,      # M1+M2 install, does not touch Saves/
+    [switch]$SkipOverlay,    # M1+M2+M3 install, does not drop version.dll
     [switch]$AllowMissingSaves   # fresh install, no Saves/ folder yet
 )
 $ErrorActionPreference = 'Stop'
@@ -52,7 +61,7 @@ if (-not (Test-IsAdmin)) {
     $cloudMarker = if ($savesExist) { Test-SteamCloudMarker -SavePath $SavePath } else { $false }
 
     Write-Host ""
-    Write-Host "safe-base (M1 + M2 + M3) will do the following:" -ForegroundColor Cyan
+    Write-Host "safe-base (M1 + M2 + M3 + M4) will do the following:" -ForegroundColor Cyan
     Write-Host "  1. Add a Windows Firewall OUTBOUND-BLOCK rule:"
     Write-Host "       name    : $RuleName"
     Write-Host "       display : $RuleDisplay"
@@ -89,13 +98,25 @@ if (-not (Test-IsAdmin)) {
             Write-Host ""
         }
     }
-    Write-Host "  5. Write an install manifest to:"
+    if (-not $SkipOverlay) {
+        $gameFolder = Split-Path -Parent $GameExe
+        Write-Host "  5. Drop safe-base's overlay into the game folder:"
+        Write-Host "       $gameFolder\version.dll"
+        Write-Host "       $gameFolder\LeafOverlay.ini    ([safebase] Enabled=true)"
+        Write-Host "     The overlay draws a persistent 'OFFLINE - MODDED PLAY"
+        Write-Host "     - SCORES WILL NOT BE SUBMITTED' banner and runs a"
+        Write-Host "     one-shot preflight from inside the game's process."
+        Write-Host "     Any existing version.dll / LeafOverlay.ini is backed"
+        Write-Host "     up under $BackupDir\overlay\ and restored on uninstall."
+    }
+    Write-Host "  6. Write an install manifest to:"
     Write-Host "       $ManifestPath"
     Write-Host ""
     Write-Host "Reversible any time with: safe-base\uninstall.ps1"
     Write-Host "Firewall rule changes are the only OS-level change; game-folder"
-    Write-Host "modifications are exactly one file (steam_api64.dll) and one"
-    Write-Host "folder rename (Saves -> backup, same drive = instant)."
+    Write-Host "modifications are exactly one file (steam_api64.dll), one folder"
+    Write-Host "rename (Saves -> backup, same drive = instant), and the overlay"
+    Write-Host "pair (version.dll + LeafOverlay.ini). All reversible."
     Write-Host ""
     if (-not $Yes) {
         $reply = Read-Host "Type YES to continue (anything else aborts)"
@@ -106,6 +127,7 @@ if (-not (Test-IsAdmin)) {
     $argLine = "-NoProfile -ExecutionPolicy Bypass -File ${q}$PSCommandPath${q} -Elevated -Yes -GameExe ${q}$GameExe${q} -SavePath ${q}$SavePath${q}"
     if ($SkipSteam)        { $argLine += " -SkipSteam" }
     if ($SkipSaves)        { $argLine += " -SkipSaves" }
+    if ($SkipOverlay)      { $argLine += " -SkipOverlay" }
     if ($AllowMissingSaves){ $argLine += " -AllowMissingSaves" }
     try {
         $p = Start-Process -FilePath 'powershell.exe' -Verb RunAs -PassThru -ArgumentList $argLine
@@ -149,6 +171,9 @@ if (-not $Yes) {
     if (-not $SkipSaves) {
         Write-Host "and move $SavePath to a timestamped backup, creating an empty placeholder."
     }
+    if (-not $SkipOverlay) {
+        Write-Host "and drop version.dll + LeafOverlay.ini into the game folder (persistent offline banner)."
+    }
     Write-Host "Manifest will be written to: $ManifestPath"
     Write-Host "Undo with: safe-base\uninstall.ps1"
     $reply = Read-Host "Type YES to continue"
@@ -183,10 +208,27 @@ if ($state.FwServiceStat -ne 'Running') {
     Write-Warning "Windows Firewall service (MpsSvc) is currently '$($state.FwServiceStat)'. The rule is created but nothing is enforcing it. Start the service (services.msc -> Windows Defender Firewall -> Start)."
 }
 
-# Helper used by M2/M3 catch blocks: fully unwind whatever succeeded so far
+# Helper used by M2/M3/M4 catch blocks: fully unwind whatever succeeded so far
 # so nothing is left half-installed.
 function Rollback-Install {
-    param($steamInfo, $saveInfo)
+    param($steamInfo, $saveInfo, $overlayInfo)
+    if ($overlayInfo) {
+        try {
+            if (Test-Path -LiteralPath $overlayInfo.versionDllPath) {
+                Remove-Item -LiteralPath $overlayInfo.versionDllPath -Force
+            }
+            if (Test-Path -LiteralPath $overlayInfo.overlayIniPath) {
+                Remove-Item -LiteralPath $overlayInfo.overlayIniPath -Force
+            }
+            if ($overlayInfo.priorVersionBackup -and (Test-Path -LiteralPath $overlayInfo.priorVersionBackup)) {
+                Move-Item -LiteralPath $overlayInfo.priorVersionBackup -Destination $overlayInfo.versionDllPath -Force
+            }
+            if ($overlayInfo.priorIniBackup -and (Test-Path -LiteralPath $overlayInfo.priorIniBackup)) {
+                Move-Item -LiteralPath $overlayInfo.priorIniBackup -Destination $overlayInfo.overlayIniPath -Force
+            }
+            Write-Host "  - rolled back M4 (removed our version.dll + INI, restored any prior)" -ForegroundColor DarkYellow
+        } catch { Write-Warning "M4 rollback failed: $($_.Exception.Message)" }
+    }
     if ($saveInfo -and $saveInfo.backupPath -and (Test-Path -LiteralPath $saveInfo.backupPath)) {
         # Restore original Saves/, park modded (which is likely empty at this
         # stage since we just moved it).
@@ -275,15 +317,44 @@ if (-not $SkipSaves) {
     Write-Warning "[M3] -SkipSaves set: not isolating Saves/ folder."
 }
 
+# ---- M4 - version.dll overlay ----
+$overlayInfo = $null
+if (-not $SkipOverlay) {
+    try {
+        Write-Host "[M4] Installing persistent-banner overlay (version.dll)..." -ForegroundColor Cyan
+        $proxySize = if ($steamInfo) { [long]$steamInfo.proxySize } else { 0 }
+        $overlayInfo = Install-VersionOverlay `
+            -GameExePath $GameExe `
+            -ExpectedSteamProxySize $proxySize
+        $slot = Find-GameOverlaySlot -GameExePath $GameExe
+        Write-Host "       version.dll -> $($overlayInfo.versionDllPath) ($($overlayInfo.sourceDllSize) bytes)"
+        Write-Host "       LeafOverlay.ini -> $($overlayInfo.overlayIniPath)"
+        if ($proxySize -gt 0) {
+            Write-Host "       startup check will expect steam_api64.dll size = $proxySize bytes"
+        } else {
+            Write-Host "       -SkipSteam set: startup size check disabled (existence only)"
+        }
+    } catch {
+        Write-Error "M4 failed: $($_.Exception.Message)"
+        Write-Host "Rolling back prior steps." -ForegroundColor Yellow
+        Rollback-Install -steamInfo $steamInfo -saveInfo $saveInfo -overlayInfo $overlayInfo
+        if ($Elevated) { Read-Host "Press Enter to close" | Out-Null }
+        exit 8
+    }
+} else {
+    Write-Warning "[M4] -SkipOverlay set: not installing version.dll banner overlay."
+}
+
 # ---- manifest ----
 New-Item -Path $StateDir -ItemType Directory -Force | Out-Null
 $milestones = @('M1')
-if (-not $SkipSteam) { $milestones += 'M2' }
-if (-not $SkipSaves) { $milestones += 'M3' }
+if (-not $SkipSteam)   { $milestones += 'M2' }
+if (-not $SkipSaves)   { $milestones += 'M3' }
+if (-not $SkipOverlay) { $milestones += 'M4' }
 $milestone = $milestones -join '+'
 
 $manifest = [ordered]@{
-    schemaVersion   = 3
+    schemaVersion   = 4
     milestone       = $milestone
     installedAt     = (Get-Date).ToUniversalTime().ToString('o')
     gameExe         = $GameExe
@@ -317,7 +388,21 @@ $manifest = [ordered]@{
         steamCloudVdf  = $saveInfo.steamCloudVdf
         preMoveFiles   = $saveInfo.preMoveFiles
     } } else { $null }
-    overlayDll      = $null   # M4
+    versionOverlay  = if ($overlayInfo) { [ordered]@{
+        gameFolder         = $overlayInfo.gameFolder
+        versionDllPath     = $overlayInfo.versionDllPath
+        overlayIniPath     = $overlayInfo.overlayIniPath
+        sourceDllPath      = $overlayInfo.sourceDllPath
+        sourceDllSize      = $overlayInfo.sourceDllSize
+        sourceDllSha256    = $overlayInfo.sourceDllSha256
+        expectedProxySize  = $overlayInfo.expectedProxySize
+        backupDir          = $overlayInfo.backupDir
+        priorVersionDll    = $overlayInfo.priorVersionDll
+        priorVersionBackup = $overlayInfo.priorVersionBackup
+        priorIni           = $overlayInfo.priorIni
+        priorIniBackup     = $overlayInfo.priorIniBackup
+        installedAt        = $overlayInfo.installedAt
+    } } else { $null }
     mods            = @()     # M5+ content mods registered here
 }
 ($manifest | ConvertTo-Json -Depth 10) | Set-Content -LiteralPath $ManifestPath -Encoding UTF8
@@ -337,6 +422,12 @@ if ($saveInfo) {
     Write-Host "               backup = $($saveInfo.backupPath)"
     Write-Host "               pre-move: $($saveInfo.preMoveCount) file(s), $($saveInfo.preMoveBytes) bytes"
 }
+if ($overlayInfo) {
+    Write-Host "  Overlay    : $($overlayInfo.versionDllPath)"
+    Write-Host "               INI = $($overlayInfo.overlayIniPath)"
+    Write-Host "               banner will show a green strip when all checks pass,"
+    Write-Host "               a red one when any fails. Log: $((Split-Path -Parent $overlayInfo.versionDllPath))\LeafOverlay.log"
+}
 Write-Host "  Manifest   : $ManifestPath"
 Write-Host ""
 Write-Host "Test it: launch the game. Steam will still start it (loopback IPC"
@@ -345,9 +436,17 @@ Write-Host "come up in a 'no Steam' or offline state - achievements, stats and"
 Write-Host "leaderboards stop working, because SteamAPI_Init returned false."
 Write-Host "The game will also start with no prior saves (Saves/ was moved aside),"
 Write-Host "so any progression is written to a throwaway folder."
+if ($overlayInfo) {
+    Write-Host "The persistent OFFLINE banner across the top-centre of the screen"
+    Write-Host "is drawn by safe-base's overlay DLL. Green means every preflight"
+    Write-Host "check passed; red means one failed and the reason is on the"
+    Write-Host "banner and in LeafOverlay.log. The F9 toggle hides the HUD panel"
+    Write-Host "but NOT the banner."
+}
 Write-Host ""
 Write-Host "If the game refuses to launch or crashes: run safe-base\uninstall.ps1."
-Write-Host "It will restore the real steam_api64.dll, restore your Saves/ folder,"
+Write-Host "It will restore your pre-existing version.dll (or remove ours),"
+Write-Host "restore the real steam_api64.dll, restore your Saves/ folder,"
 Write-Host "and remove the firewall rule (parking the modded Saves/ alongside)."
 Write-Host ""
 Write-Host "Check any time with: safe-base\status.ps1"

@@ -14,6 +14,14 @@
 //     layered window composites correctly over it regardless of DX11/DX12/Vulkan.
 //
 // Nothing here touches game memory or the encrypted metadata. It is purely additive.
+//
+// Since M4 the same DLL also acts as safe-base's on-screen reporter. When the
+// [safebase] section of LeafOverlay.ini has Enabled=true, the overlay draws a
+// persistent banner ("OFFLINE · MODDED PLAY · SCORES WILL NOT BE SUBMITTED")
+// that the F9 toggle can NOT hide, and runs a one-shot preflight check on
+// startup (Steam proxy file size, Saves/ isolation marker, live outbound
+// connect() probe). If any check fails the banner turns red. This still does
+// not police the game process.
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -22,7 +30,10 @@
 #define _CRT_SECURE_NO_WARNINGS
 #endif
 #include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <psapi.h>
+#include <strsafe.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <wchar.h>
@@ -30,6 +41,7 @@
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "psapi.lib")
+#pragma comment(lib, "ws2_32.lib")
 
 static HMODULE g_self = nullptr;
 static FILE*   g_log = nullptr;
@@ -64,6 +76,33 @@ static ULONGLONG g_lastMetricMs = 0;
 static ULARGE_INTEGER g_prevKern{}, g_prevUser{};
 static LARGE_INTEGER g_prevQpc{};
 static LARGE_INTEGER g_qpcFreq{};
+
+// ---- safe-base mode (M4) ----
+// When [safebase] Enabled=true in LeafOverlay.ini, we draw a persistent
+// non-hideable banner (OFFLINE · MODDED PLAY · SCORES WILL NOT BE SUBMITTED)
+// and run a one-shot startup preflight from inside the game process:
+//   * the Steam proxy DLL at <GameFolder>/Leaf it Alone_Data/Plugins/x86_64/
+//     steam_api64.dll is present and matches the expected size,
+//   * the Saves/ isolation marker is present at
+//     %USERPROFILE%/AppData/LocalLow/Eternity/Leaf it Alone/Saves/.safebase-empty,
+//   * a live connect() to 1.1.1.1:443 does NOT complete (proof that the
+//     program-scoped firewall rule for THIS process is enforcing).
+// We do not police mid-session tampering. If any check fails the banner
+// turns red and the details go to LeafOverlay.log.
+static bool      g_safebase           = false;
+static bool      g_sbBanner           = true;         // draw the banner at all
+static int       g_sbBannerCorner     = 0;            // 0=TopCenter 1=TopLeft 2=TopRight 3=BottomCenter
+static int       g_sbBannerMargin     = 14;           // px from the anchor edge
+static wchar_t   g_sbBannerText[192]  = L"OFFLINE \x00B7 MODDED PLAY \x00B7 SCORES WILL NOT BE SUBMITTED";
+static bool      g_sbCheckProxy       = true;
+static bool      g_sbCheckSaves       = true;
+static bool      g_sbCheckOutbound    = true;
+static ULONGLONG g_sbExpectedProxySize = 0;           // bytes; install.ps1 writes this after M2
+static int       g_sbProbeTimeoutMs   = 1500;
+// Runtime results.
+static bool      g_sbRanChecks        = false;
+static bool      g_sbOk               = true;
+static wchar_t   g_sbFailSummary[320] = L"";          // compact one-liner for banner fallback
 
 // Unique color key: every pixel painted this color becomes fully transparent,
 // so the game shows through everywhere except our HUD panel.
@@ -135,6 +174,35 @@ static void LoadConfig() {
     GetPrivateProfileStringW(L"overlay", L"Subtitle", L"Leaf it Alone - native overlay", g_subtitle, 128, ini);
     OLog("config loaded: key=%ls corner=%d margin=%d alpha=%d title='%ls'",
          g_toggleName, g_corner, g_margin, g_alpha, g_title);
+
+    // ---- [safebase] section: M4 banner + preconditions ----
+    GetPrivateProfileStringW(L"safebase", L"Enabled", L"false", buf, 128, ini);
+    g_safebase = ParseBool(buf, false);
+    GetPrivateProfileStringW(L"safebase", L"Banner", L"true", buf, 128, ini);
+    g_sbBanner = ParseBool(buf, true);
+    GetPrivateProfileStringW(L"safebase", L"BannerText", L"", buf, 128, ini);
+    if (buf[0]) { lstrcpynW(g_sbBannerText, buf, 192); }
+    GetPrivateProfileStringW(L"safebase", L"BannerCorner", L"TopCenter", buf, 128, ini);
+    if      (_wcsicmp(buf, L"TopLeft")     == 0) g_sbBannerCorner = 1;
+    else if (_wcsicmp(buf, L"TopRight")    == 0) g_sbBannerCorner = 2;
+    else if (_wcsicmp(buf, L"BottomCenter")== 0) g_sbBannerCorner = 3;
+    else                                        g_sbBannerCorner = 0;
+    g_sbBannerMargin = GetPrivateProfileIntW(L"safebase", L"BannerMargin", 14, ini);
+    if (g_sbBannerMargin < 0) g_sbBannerMargin = 0;
+    GetPrivateProfileStringW(L"safebase", L"CheckSteamProxy",  L"true", buf, 128, ini); g_sbCheckProxy    = ParseBool(buf, true);
+    GetPrivateProfileStringW(L"safebase", L"CheckSaveIsolation", L"true", buf, 128, ini); g_sbCheckSaves   = ParseBool(buf, true);
+    GetPrivateProfileStringW(L"safebase", L"CheckOutbound",    L"true", buf, 128, ini); g_sbCheckOutbound = ParseBool(buf, true);
+    {
+        wchar_t num[32];
+        GetPrivateProfileStringW(L"safebase", L"ExpectedSteamProxySize", L"0", num, 32, ini);
+        g_sbExpectedProxySize = (ULONGLONG)_wtoi64(num);
+    }
+    g_sbProbeTimeoutMs = GetPrivateProfileIntW(L"safebase", L"ProbeTimeoutMs", 1500, ini);
+    if (g_sbProbeTimeoutMs < 100) g_sbProbeTimeoutMs = 100;
+    if (g_sbProbeTimeoutMs > 5000) g_sbProbeTimeoutMs = 5000;
+    if (g_safebase) OLog("safebase enabled: banner=%d corner=%d margin=%d expProxySize=%llu checks[proxy=%d saves=%d outbound=%d]",
+        g_sbBanner, g_sbBannerCorner, g_sbBannerMargin, g_sbExpectedProxySize,
+        g_sbCheckProxy, g_sbCheckSaves, g_sbCheckOutbound);
 }
 
 // ---------------------------------------------------------------------------
@@ -277,6 +345,172 @@ static HWND FindGameWindow() {
 }
 
 // ---------------------------------------------------------------------------
+// safe-base preconditions (M4). Runs once at startup, before the message loop.
+// Records pass/fail in g_sbOk and a compact fail summary in g_sbFailSummary.
+// Details go to LeafOverlay.log. Never blocks the game.
+// ---------------------------------------------------------------------------
+static bool PathExistsW(const wchar_t* p) {
+    DWORD a = GetFileAttributesW(p);
+    return a != INVALID_FILE_ATTRIBUTES;
+}
+
+static bool GetFileSizeW(const wchar_t* p, ULONGLONG* outSize) {
+    WIN32_FILE_ATTRIBUTE_DATA fad{};
+    if (!GetFileAttributesExW(p, GetFileExInfoStandard, &fad)) return false;
+    ULARGE_INTEGER u; u.HighPart = fad.nFileSizeHigh; u.LowPart = fad.nFileSizeLow;
+    *outSize = u.QuadPart;
+    return true;
+}
+
+// Live outbound probe. Attempts a non-blocking TCP connect to 1.1.1.1:443 and
+// waits up to `timeoutMs` for the handshake. Returns true if the outbound
+// traffic appears to be BLOCKED (silent drop / timeout / unreachable /
+// policy-denied) and false if it succeeded or got refused/reset by a host.
+static bool ProbeOutboundBlocked(int timeoutMs) {
+    WSADATA wsa;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+        OLog("probe: WSAStartup failed gle=%d (assuming blocked)", WSAGetLastError());
+        return true;
+    }
+    SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s == INVALID_SOCKET) {
+        OLog("probe: socket() INVALID_SOCKET gle=%d (assuming blocked)", WSAGetLastError());
+        WSACleanup();
+        return true;
+    }
+    u_long nonBlock = 1;
+    ioctlsocket(s, FIONBIO, &nonBlock);
+
+    sockaddr_in a{};
+    a.sin_family = AF_INET;
+    a.sin_port = htons(443);
+    // 1.1.1.1 in little-endian byte order (bytes 1.1.1.1 -> 0x01010101).
+    a.sin_addr.S_un.S_addr = 0x01010101;
+
+    bool blocked = true;
+    int rc = connect(s, (sockaddr*)&a, sizeof(a));
+    if (rc == 0) {
+        blocked = false;                                // immediate success (unlikely, but "reachable")
+        OLog("probe: connect() returned 0 immediately - outbound NOT blocked");
+    } else {
+        int gle = WSAGetLastError();
+        if (gle == WSAEWOULDBLOCK) {
+            fd_set wfds; FD_ZERO(&wfds); FD_SET(s, &wfds);
+            timeval tv; tv.tv_sec = timeoutMs / 1000; tv.tv_usec = (timeoutMs % 1000) * 1000;
+            int sr = select(0, nullptr, &wfds, nullptr, &tv);
+            if (sr > 0) {
+                int err = 0; int len = sizeof(err);
+                getsockopt(s, SOL_SOCKET, SO_ERROR, (char*)&err, &len);
+                if (err == 0 || err == WSAECONNREFUSED) {
+                    blocked = false;
+                    OLog("probe: TCP handshake completed or refused (err=%d) - outbound NOT blocked", err);
+                } else {
+                    OLog("probe: writable with err=%d (treated as blocked)", err);
+                }
+            } else if (sr == 0) {
+                OLog("probe: select() timed out after %dms - outbound blocked (SYN dropped)", timeoutMs);
+            } else {
+                OLog("probe: select() error gle=%d (treated as blocked)", WSAGetLastError());
+            }
+        } else if (gle == WSAEACCES || gle == WSAEHOSTUNREACH ||
+                   gle == WSAENETUNREACH || gle == WSAETIMEDOUT) {
+            OLog("probe: immediate WSA error %d (treated as blocked)", gle);
+        } else {
+            OLog("probe: unexpected WSA error %d (treated as blocked)", gle);
+        }
+    }
+    closesocket(s);
+    WSACleanup();
+    return blocked;
+}
+
+static void RunPreconditions() {
+    g_sbRanChecks = true;
+    if (!g_safebase) return;                            // nothing to verify
+
+    bool ok = true;
+    wchar_t reasons[512]; reasons[0] = 0;
+    size_t rpos = 0;
+    auto appendReason = [&](const wchar_t* txt) {
+        size_t used = wcslen(reasons);
+        if (used > 0 && rpos + 3 < 512) {
+            reasons[used++] = L';';
+            reasons[used++] = L' ';
+            rpos = used;
+        }
+        StringCchCopyW(reasons + used, 512 - used, txt);
+        rpos = wcslen(reasons);
+    };
+
+    wchar_t dir[MAX_PATH] = L"";
+    GetModuleFileNameW(g_self, dir, MAX_PATH);
+    wchar_t* slash = wcsrchr(dir, L'\\'); if (slash) *slash = 0;   // dir = game folder
+
+    // --- Steam proxy DLL ---
+    if (g_sbCheckProxy) {
+        wchar_t dllPath[MAX_PATH];
+        _snwprintf_s(dllPath, MAX_PATH, _TRUNCATE,
+                     L"%s\\Leaf it Alone_Data\\Plugins\\x86_64\\steam_api64.dll", dir);
+        ULONGLONG sz = 0;
+        if (!GetFileSizeW(dllPath, &sz)) {
+            ok = false;
+            appendReason(L"steam proxy missing");
+            OLog("PRECOND FAIL: no steam_api64.dll at %ls", dllPath);
+        } else if (g_sbExpectedProxySize != 0 && sz != g_sbExpectedProxySize) {
+            ok = false;
+            wchar_t msg[128];
+            swprintf(msg, 128, L"steam proxy size %llu (expected %llu)", sz, g_sbExpectedProxySize);
+            appendReason(msg);
+            OLog("PRECOND FAIL: %ls", msg);
+        } else {
+            OLog("precond: steam proxy at %ls size=%llu OK", dllPath, sz);
+        }
+    }
+
+    // --- Saves/ isolation marker ---
+    if (g_sbCheckSaves) {
+        wchar_t env[MAX_PATH];
+        DWORD n = GetEnvironmentVariableW(L"USERPROFILE", env, MAX_PATH);
+        if (n == 0 || n >= MAX_PATH) {
+            ok = false;
+            appendReason(L"USERPROFILE not readable");
+            OLog("PRECOND FAIL: USERPROFILE env var missing");
+        } else {
+            wchar_t marker[MAX_PATH];
+            _snwprintf_s(marker, MAX_PATH, _TRUNCATE,
+                         L"%s\\AppData\\LocalLow\\Eternity\\Leaf it Alone\\Saves\\.safebase-empty", env);
+            if (!PathExistsW(marker)) {
+                ok = false;
+                appendReason(L"Saves/ not isolated");
+                OLog("PRECOND FAIL: no marker at %ls", marker);
+            } else {
+                OLog("precond: save isolation marker OK (%ls)", marker);
+            }
+        }
+    }
+
+    // --- Live outbound probe ---
+    if (g_sbCheckOutbound) {
+        OLog("precond: probing outbound (connect 1.1.1.1:443, %dms cap)", g_sbProbeTimeoutMs);
+        bool blocked = ProbeOutboundBlocked(g_sbProbeTimeoutMs);
+        if (!blocked) {
+            ok = false;
+            appendReason(L"outbound NOT blocked");
+        } else {
+            OLog("precond: outbound probe OK (blocked)");
+        }
+    }
+
+    g_sbOk = ok;
+    if (!ok) {
+        StringCchCopyW(g_sbFailSummary, 320, reasons);
+        OLog("PRECONDITIONS FAILED: %ls", reasons);
+    } else {
+        OLog("PRECONDITIONS OK");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Painting + following the game window.
 // ---------------------------------------------------------------------------
 static void PaintOverlay(HWND h) {
@@ -291,9 +525,39 @@ static void PaintOverlay(HWND h) {
         FillRect(dc, &cr, key);
         DeleteObject(key);
     }
-    if (!g_visible) { EndPaint(h, &ps); return; }
 
     SetBkMode(dc, TRANSPARENT);
+
+    // ---- safe-base banner (persistent, non-hideable when safebase is enabled) ----
+    if (g_safebase && g_sbBanner) {
+        SelectObject(dc, g_fontSmall);
+        const wchar_t* txt = g_sbOk ? g_sbBannerText : g_sbFailSummary[0] ? g_sbFailSummary : g_sbBannerText;
+        SIZE bs{}; GetTextExtentPoint32W(dc, txt, (int)wcslen(txt), &bs);
+        int bpw = bs.cx + 34, bph = bs.cy + 20;
+        int bpx, bpy;
+        switch (g_sbBannerCorner) {
+            case 1: bpx = g_sbBannerMargin;                              bpy = g_sbBannerMargin; break;
+            case 2: bpx = cw - bpw - g_sbBannerMargin;                   bpy = g_sbBannerMargin; break;
+            case 3: bpx = (cw - bpw) / 2;                                bpy = ch - bph - g_sbBannerMargin; break;
+            default: bpx = (cw - bpw) / 2;                               bpy = g_sbBannerMargin; break;
+        }
+        if (bpx < 0) bpx = 0; if (bpy < 0) bpy = 0;
+        RECT bp = { bpx, bpy, bpx + bpw, bpy + bph };
+        COLORREF bodyC = g_sbOk ? RGB(20, 78, 34) : RGB(112, 22, 22);
+        COLORREF edgeC = g_sbOk ? RGB(120, 200, 130) : RGB(230, 90, 90);
+        COLORREF textC = RGB(240, 246, 240);
+        HBRUSH bb = CreateSolidBrush(bodyC);
+        HPEN   be = CreatePen(PS_SOLID, 2, edgeC);
+        HBRUSH ob = (HBRUSH)SelectObject(dc, bb);
+        HPEN   op = (HPEN)SelectObject(dc, be);
+        RoundRect(dc, bp.left, bp.top, bp.right, bp.bottom, 18, 18);
+        SelectObject(dc, ob); SelectObject(dc, op);
+        DeleteObject(bb); DeleteObject(be);
+        SetTextColor(dc, textC);
+        DrawTextW(dc, txt, -1, &bp, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    }
+
+    if (!g_visible) { EndPaint(h, &ps); return; }
 
     // Live strings.
     SYSTEMTIME now; GetLocalTime(&now);
@@ -444,6 +708,12 @@ static DWORD WINAPI OverlayThread(LPVOID) {
     OpenLog();
     OLog("=== Leaf it Alone native overlay starting (pid=%lu) ===", GetCurrentProcessId());
     LoadConfig();
+
+    // safe-base preconditions: probe outbound (may block for up to
+    // ProbeTimeoutMs), read the file system for the marker + proxy DLL.
+    // Runs off the game's render thread (this is our own thread), so it
+    // never freezes the game.
+    if (g_safebase) RunPreconditions();
 
     // Real version.dll must be reachable; log if not (forwarding would then be dead).
     if (!RealVer("GetFileVersionInfoA"))

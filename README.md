@@ -22,11 +22,14 @@ protected Unity IL2CPP build. Fully shipped, documented and videoed.
 ### `safe-base/`
 The **offline-safety framework**. Installs once, keeps modded play from ever
 touching the game's leaderboards or your real save file. **Status: M1 + M2 +
-M3 landed and in-game tested (2026-11-05)** — the firewall block, the
-Steamworks stub proxy AND save isolation are implemented, reversible and
-verified. The game launches normally, the leaderboard renders empty and a
-modded play-session writes to a throwaway `Saves/` that never touches your
-real one. Three upload paths closed, one leak class mitigated:
+M3 landed and in-game tested (2026-11-05); M4 landed and pending in-game
+test.** The firewall block, the Steamworks stub proxy AND save isolation are
+implemented, reversible and verified. The game launches normally, the
+leaderboard renders empty and a modded play-session writes to a throwaway
+`Saves/` that never touches your real one. M4 layers a persistent
+in-game banner + a one-shot startup probe on top of those three, merging
+into the same `version.dll` the standalone overlay ships. Four upload paths
+closed, one leak class mitigated, one visible-verifier added:
 - **[M1 ✅]** Windows Firewall outbound-block on `Leaf it Alone.exe`,
   verified at install (rule + service + manifest). Closes the game's own
   HTTPS path.
@@ -43,13 +46,17 @@ real one. Three upload paths closed, one leak class mitigated:
   deleted). Refuses to run if the game is currently active. If Steam Cloud
   is enabled on the game, install prints a warning with the click-path to
   disable it manually (safe-base never edits Steam's own config).
-- **[M4]** A persistent `OFFLINE · MODDED PLAY · SCORES WILL NOT BE
-  SUBMITTED` banner drawn from inside the game's own process (the same
-  `version.dll` that ships the cosmetic HUD), with a **one-shot** startup
-  check: file-size match on the Steam proxy, presence of the `Saves/`
-  isolation marker, and a live `connect(1.1.1.1:443)` outbound probe that
-  only the game process can perform meaningfully. Failing any check turns
-  the banner red; safe-base does not police manual tampering mid-play.
+- **[M4 ✅ (in-game test pending)]** A persistent
+  `OFFLINE · MODDED PLAY · SCORES WILL NOT BE SUBMITTED` banner drawn from
+  inside the game's own process (the same `version.dll` that ships the
+  cosmetic HUD), with a **one-shot** startup check: file-size match on the
+  Steam proxy, presence of the `Saves/` isolation marker, and a live
+  `connect(1.1.1.1:443)` outbound probe that only the game process can
+  perform meaningfully. Failing any check turns the banner red; safe-base
+  does not police manual tampering mid-play. `install.ps1` backs up any
+  pre-existing `version.dll` (e.g. a standalone overlay install) before
+  dropping ours; `uninstall.ps1` restores the overlay slot FIRST so your
+  prior setup comes back before anything else changes.
 - **[M5]** A PowerShell SDK (`base.psm1`) with `Assert-SafeBaseActive`,
   `Backup-Original`, `Register-Mod` / `Unregister-Mod` that content mods
   import — so no content mod ever has to repeat any of this.
@@ -85,7 +92,7 @@ content-mods/<name>/
 | I want to… | Do this |
 |---|---|
 | Just see how the DLL-hijack overlay works | Follow [`overlay/README.md`](overlay/README.md) |
-| Try the M1 + M2 + M3 safety framework now (no content mods yet) | Close the game. `safe-base/install.ps1` → play → `safe-base/uninstall.ps1`. Status any time: `safe-base/status.ps1` |
+| Try the M1 + M2 + M3 + M4 safety framework now (no content mods yet) | Close the game. `safe-base/install.ps1` → play (green banner appears at top-centre) → `safe-base/uninstall.ps1`. Status any time: `safe-base/status.ps1` |
 | Play the game with mods without polluting the leaderboard (M1-M5 all landed) | Install `safe-base/` once |
 | Actually change gameplay content (bigger bag, more leaves, faster seal) | Waiting on safe-base M5. Then: install `safe-base/`, then `apply.ps1` from a mod in [`content-mods/`](content-mods/README.md) |
 | Undo everything and go back to vanilla | Currently `safe-base/uninstall.ps1`. Once content mods exist: `safe-base/uninstall-all.ps1` (M5) — reverts every registered content mod, restores your original save, removes the firewall rule |
