@@ -51,6 +51,31 @@ release notes inside its README.
   whereas before M2 it populated from `Steam.exe` via loopback (that was the
   leak M2 was built to close). Both upload paths (M1 web-service, M2
   Steamworks) are now confirmed closed by observation.
+- **`safe-base/` M3 landed**: save isolation in `install.ps1` /
+  `uninstall.ps1` / `status.ps1` + shared helpers in `common.ps1`. On
+  install, safe-base refuses if the game process is currently running,
+  records the pre-move Saves/ file list (rel path + size + SHA-256 per
+  file) into the manifest, then does an atomic same-drive rename of
+  `%USERPROFILE%\AppData\LocalLow\Eternity\Leaf it Alone\Saves\` into
+  `%LOCALAPPDATA%\LeafItAloneSafe\backup\saves-<UTC timestamp>\` and
+  creates an empty placeholder Saves/ with a `.safebase-empty` marker.
+  Steam Cloud is detected by looking for `steam_autocloud.vdf`; if present
+  install prints the click-path to disable it manually (safe-base never
+  edits Steam's own config). On uninstall the modded Saves/ is **always
+  parked** at `backup\saves-modded-<ts>\`, never deleted, then the
+  original is moved back. Ordering: Saves/ first, DLL second, firewall
+  rule LAST (so the network stays blocked until file state is fully
+  vanilla). Manifest `schemaVersion` bumped to 3, `saveIsolation` block
+  populated with the pre-move file list + hashes and `steamCloudVdf`
+  flag. `status.ps1` reports isolation state (isolated / active / missing
+  / n/a) and warns if a `steam_autocloud.vdf` marker has reappeared at
+  the live path (a Steam client rehydration signal). Rollback: if M3
+  fails after M1 + M2 succeeded, install unwinds Saves/, then the DLL,
+  then the firewall rule in order. New flags: `-SavePath`, `-SkipSaves`,
+  `-AllowMissingSaves`. Smoke-tested end-to-end against a temp-tree fake
+  Saves/ folder (four files including a fake steam_autocloud.vdf): move,
+  placeholder + marker write, modded-content write, park, restore all
+  round-trip correctly.
 - First content mod planned: `content-mods/bag-capacity/` (M6).
 
 ## 1.0.0

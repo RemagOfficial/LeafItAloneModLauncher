@@ -1,34 +1,41 @@
 # install.ps1 — safe-base: verified Windows Firewall outbound-block (M1) +
-# steam_api64.dll stub proxy (M2) for Leaf it Alone.
+# steam_api64.dll stub proxy (M2) + save isolation (M3) for Leaf it Alone.
 #
 # What it does:
 #   1. Auto-detects Leaf it Alone.exe (override with -GameExe "C:\...\Leaf it Alone.exe").
-#   2. Self-elevates via UAC.
-#   3. Adds a Windows Firewall rule "LeafItAloneSafe-BlockOutbound" blocking
+#   2. Refuses if the game is currently running.
+#   3. Self-elevates via UAC.
+#   4. Adds a Windows Firewall rule "LeafItAloneSafe-BlockOutbound" blocking
 #      ALL outbound TCP+UDP from the game's exe, on every profile. (M1)
-#   4. Verifies the rule (present + enabled + Block + Outbound + MpsSvc running).
-#   5. Locates steam_api64.dll under the game folder, moves the real DLL to a
+#   5. Verifies the rule (present + enabled + Block + Outbound + MpsSvc running).
+#   6. Locates steam_api64.dll under the game folder, moves the real DLL to a
 #      backup under %LOCALAPPDATA%\LeafItAloneSafe\backup\, then drops the
 #      stub proxy at the same path so the game's SteamAPI_InitFlat() call
 #      returns false. (M2)
-#   6. Verifies the DLL at that path classifies as "proxy" (hash matches our
-#      source in safe-base\steam_proxy\steam_api64.dll).
-#   7. Writes an install manifest at %LOCALAPPDATA%\LeafItAloneSafe\manifest.json
-#      recording everything needed to reverse the install, and to let later
-#      milestones (M3-M5) and content mods see the base is active.
+#   7. Verifies the DLL at that path classifies as "proxy".
+#   8. Moves the game's Saves/ folder (Unity's LocalLow convention) into the
+#      safe-base backup and creates an empty placeholder in its place. Any
+#      Steam Cloud marker file (steam_autocloud.vdf) travels with the backup,
+#      which means the modded play has no cloud identity to sync against.
+#      Warns about Steam Cloud if the marker was present. (M3)
+#   9. Writes an install manifest at %LOCALAPPDATA%\LeafItAloneSafe\manifest.json
+#      recording everything needed to reverse the install.
 #
-# Any step 5-6 failure triggers a rollback of step 3 (rule removed). Nothing
-# is left half-installed.
+# Any step 6-9 failure triggers a rollback of prior steps (proxy removed,
+# firewall rule removed, Saves/ restored if we got that far). Nothing is left
+# half-installed.
 #
-# Reversible: run uninstall.ps1.
-# Requires admin (self-elevates).
+# Reversible: run uninstall.ps1. Requires admin (self-elevates).
 
 [CmdletBinding()]
 param(
     [string]$GameExe,
-    [switch]$Yes,          # skip interactive confirmation (used after elevation hop)
-    [switch]$Elevated,     # internal: set when re-launched as admin
-    [switch]$SkipSteam     # M1-only install, for debugging (does not drop proxy)
+    [string]$SavePath,       # override auto-detected save folder (advanced)
+    [switch]$Yes,            # skip interactive confirmation (used after elevation hop)
+    [switch]$Elevated,       # internal: set when re-launched as admin
+    [switch]$SkipSteam,      # M1-only install, for debugging (does not drop proxy)
+    [switch]$SkipSaves,      # M1+M2 install, does not touch Saves/
+    [switch]$AllowMissingSaves   # fresh install, no Saves/ folder yet
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\common.ps1"
@@ -40,8 +47,12 @@ if (-not (Test-IsAdmin)) {
     if (-not $GameExe) {
         try { $GameExe = Find-GameExe } catch { Write-Error $_; exit 2 }
     }
+    if (-not $SavePath) { $SavePath = Find-GameSaveFolder }
+    $savesExist = Test-Path -LiteralPath $SavePath
+    $cloudMarker = if ($savesExist) { Test-SteamCloudMarker -SavePath $SavePath } else { $false }
+
     Write-Host ""
-    Write-Host "safe-base (M1 + M2) will do the following:" -ForegroundColor Cyan
+    Write-Host "safe-base (M1 + M2 + M3) will do the following:" -ForegroundColor Cyan
     Write-Host "  1. Add a Windows Firewall OUTBOUND-BLOCK rule:"
     Write-Host "       name    : $RuleName"
     Write-Host "       display : $RuleDisplay"
@@ -55,12 +66,36 @@ if (-not (Test-IsAdmin)) {
         Write-Host "     Effect: SteamAPI_Init returns false; game thinks Steam"
         Write-Host "     is not running; no Steamworks upload path exists."
     }
-    Write-Host "  4. Write an install manifest to:"
+    if (-not $SkipSaves) {
+        Write-Host "  4. Move the game's Saves/ folder to"
+        Write-Host "       $BackupDir\saves-<UTC timestamp>\"
+        Write-Host "     and create an empty placeholder at:"
+        Write-Host "       $SavePath"
+        Write-Host "     Effect: modded play writes to a fresh, throwaway Saves/."
+        Write-Host "     On uninstall the modded folder is PARKED (never deleted)"
+        Write-Host "     and the original is restored in place."
+        if ($savesExist -and $cloudMarker) {
+            Write-Host ""
+            Write-Host "  !!! STEAM CLOUD DETECTED !!!" -ForegroundColor Yellow
+            Write-Host "  Saves/steam_autocloud.vdf is present, which means Steam"
+            Write-Host "  Cloud sync is enabled for this game. Even with M2's proxy"
+            Write-Host "  installed, the Steam client may still push or pull files"
+            Write-Host "  in this folder on its own schedule."
+            Write-Host "  RECOMMENDED: before playing modded, disable Steam Cloud"
+            Write-Host "  for this game manually:"
+            Write-Host "    Steam Library -> right-click Leaf it Alone -> Properties"
+            Write-Host "    -> Updates -> uncheck 'Keep game saves in the Steam Cloud'"
+            Write-Host "  safe-base will NOT edit your Steam config for you."
+            Write-Host ""
+        }
+    }
+    Write-Host "  5. Write an install manifest to:"
     Write-Host "       $ManifestPath"
     Write-Host ""
     Write-Host "Reversible any time with: safe-base\uninstall.ps1"
-    Write-Host "Firewall rule changes are the only OS-level change; the game"
-    Write-Host "folder modification is exactly one file (steam_api64.dll)."
+    Write-Host "Firewall rule changes are the only OS-level change; game-folder"
+    Write-Host "modifications are exactly one file (steam_api64.dll) and one"
+    Write-Host "folder rename (Saves -> backup, same drive = instant)."
     Write-Host ""
     if (-not $Yes) {
         $reply = Read-Host "Type YES to continue (anything else aborts)"
@@ -68,8 +103,10 @@ if (-not (Test-IsAdmin)) {
     }
     Write-Host "Requesting administrator rights (UAC prompt)..." -ForegroundColor Yellow
     $q = '"'
-    $argLine = "-NoProfile -ExecutionPolicy Bypass -File ${q}$PSCommandPath${q} -Elevated -Yes -GameExe ${q}$GameExe${q}"
-    if ($SkipSteam) { $argLine += " -SkipSteam" }
+    $argLine = "-NoProfile -ExecutionPolicy Bypass -File ${q}$PSCommandPath${q} -Elevated -Yes -GameExe ${q}$GameExe${q} -SavePath ${q}$SavePath${q}"
+    if ($SkipSteam)        { $argLine += " -SkipSteam" }
+    if ($SkipSaves)        { $argLine += " -SkipSaves" }
+    if ($AllowMissingSaves){ $argLine += " -AllowMissingSaves" }
     try {
         $p = Start-Process -FilePath 'powershell.exe' -Verb RunAs -PassThru -ArgumentList $argLine
         $p.WaitForExit()
@@ -84,11 +121,21 @@ if (-not (Test-IsAdmin)) {
 # Elevated path: do the real work.
 # ---------------------------------------------------------------------------
 if (-not $GameExe) { $GameExe = Find-GameExe }
+if (-not $SavePath) { $SavePath = Find-GameSaveFolder }
 
 # Refuse double-install (would leave stale rule + orphan manifest otherwise).
 if (Test-Path -LiteralPath $ManifestPath) {
     Write-Error "safe-base is already installed (manifest at $ManifestPath). Run uninstall.ps1 first if you want to reinstall."
     exit 4
+}
+
+# Refuse if the game is currently running: file-state changes under a live
+# process are what corrupt saves.
+$running = Get-Process -Name 'Leaf it Alone' -ErrorAction SilentlyContinue
+if ($running) {
+    Write-Error "Leaf it Alone is running (PID(s): $($running.Id -join ', ')). Close the game before installing safe-base."
+    if ($Elevated) { Read-Host "Press Enter to close" | Out-Null }
+    exit 5
 }
 
 # Show plan if we're here directly (not via the pre-elevate hop) and user hasn't passed -Yes.
@@ -98,6 +145,9 @@ if (-not $Yes) {
     Write-Host "TCP+UDP from: $GameExe"
     if (-not $SkipSteam) {
         Write-Host "and replace steam_api64.dll with the stub proxy (backup kept)."
+    }
+    if (-not $SkipSaves) {
+        Write-Host "and move $SavePath to a timestamped backup, creating an empty placeholder."
     }
     Write-Host "Manifest will be written to: $ManifestPath"
     Write-Host "Undo with: safe-base\uninstall.ps1"
@@ -133,6 +183,34 @@ if ($state.FwServiceStat -ne 'Running') {
     Write-Warning "Windows Firewall service (MpsSvc) is currently '$($state.FwServiceStat)'. The rule is created but nothing is enforcing it. Start the service (services.msc -> Windows Defender Firewall -> Start)."
 }
 
+# Helper used by M2/M3 catch blocks: fully unwind whatever succeeded so far
+# so nothing is left half-installed.
+function Rollback-Install {
+    param($steamInfo, $saveInfo)
+    if ($saveInfo -and $saveInfo.backupPath -and (Test-Path -LiteralPath $saveInfo.backupPath)) {
+        # Restore original Saves/, park modded (which is likely empty at this
+        # stage since we just moved it).
+        try {
+            if (Test-Path -LiteralPath $saveInfo.originalPath) {
+                Remove-Item -LiteralPath $saveInfo.originalPath -Recurse -Force
+            }
+            Move-Item -LiteralPath $saveInfo.backupPath -Destination $saveInfo.originalPath -Force
+            Write-Host "  - rolled back M3 (restored Saves/)" -ForegroundColor DarkYellow
+        } catch { Write-Warning "M3 rollback failed: $($_.Exception.Message)" }
+    }
+    if ($steamInfo) {
+        try {
+            if (Test-Path -LiteralPath $steamInfo.realDllPath) {
+                Remove-Item -LiteralPath $steamInfo.realDllPath -Force
+            }
+            Move-Item -LiteralPath $steamInfo.realDllBackupPath -Destination $steamInfo.realDllPath -Force
+            Write-Host "  - rolled back M2 (restored real steam_api64.dll)" -ForegroundColor DarkYellow
+        } catch { Write-Warning "M2 rollback failed: $($_.Exception.Message)" }
+    }
+    Remove-NetFirewallRule -Name $RuleName -ErrorAction SilentlyContinue
+    Write-Host "  - rolled back M1 (removed firewall rule)" -ForegroundColor DarkYellow
+}
+
 # ---- M2 - steam proxy ----
 $steamInfo = $null
 if (-not $SkipSteam) {
@@ -148,7 +226,6 @@ if (-not $SkipSteam) {
         Write-Host "[M2] Installing proxy (real DLL backed up to $BackupDir)..." -ForegroundColor Cyan
         $steamInfo = Install-SteamProxy -RealDllPath $steamPath -ProxySource $SteamProxySource
 
-        # Re-read the DLL at the game's path and confirm it's our proxy.
         $kind = Classify-SteamDll -Path $steamInfo.realDllPath -ProxySha $steamInfo.proxySha256
         if ($kind -ne 'proxy') {
             throw "M2 verification failed: steam_api64.dll at '$($steamInfo.realDllPath)' classifies as '$kind', expected 'proxy'"
@@ -156,19 +233,57 @@ if (-not $SkipSteam) {
         Write-Host "       proxy active ($($steamInfo.proxySize) bytes, sha256 $($steamInfo.proxySha256.Substring(0,12))...)"
     } catch {
         Write-Error "M2 failed: $($_.Exception.Message)"
-        Write-Host "Rolling back M1 (removing firewall rule) so state stays coherent." -ForegroundColor Yellow
-        Remove-NetFirewallRule -Name $RuleName -ErrorAction SilentlyContinue
+        Write-Host "Rolling back prior steps so state stays coherent." -ForegroundColor Yellow
+        Rollback-Install -steamInfo $steamInfo -saveInfo $null
+        if ($Elevated) { Read-Host "Press Enter to close" | Out-Null }
         exit 6
     }
 } else {
-    Write-Warning "[M2] -SkipSteam set: not installing steam_api64.dll proxy. Steamworks uploads will NOT be blocked."
+    Write-Warning "[M2] -SkipSteam set: not installing steam_api64.dll proxy."
+}
+
+# ---- M3 - save isolation ----
+$saveInfo = $null
+if (-not $SkipSaves) {
+    try {
+        Write-Host "[M3] Isolating saves..." -ForegroundColor Cyan
+        Write-Host "       source: $SavePath"
+        if (-not (Test-Path -LiteralPath $SavePath)) {
+            if (-not $AllowMissingSaves) {
+                throw "Saves/ folder not found at $SavePath. Play the game once and save, or pass -AllowMissingSaves."
+            }
+            Write-Host "       Saves/ does not exist yet (-AllowMissingSaves set). Creating placeholder only."
+        }
+        $saveInfo = Install-SaveIsolation -SavePath $SavePath -AllowMissing:$AllowMissingSaves
+        Write-Host "       backup: $($saveInfo.backupPath)"
+        Write-Host "       pre-move content: $($saveInfo.preMoveCount) file(s), $($saveInfo.preMoveBytes) bytes"
+        if ($saveInfo.steamCloudVdf) {
+            Write-Host ""
+            Write-Host "  !!! Steam Cloud marker (steam_autocloud.vdf) was present. It moved with the backup." -ForegroundColor Yellow
+            Write-Host "  Before playing modded, disable Steam Cloud for this game:"
+            Write-Host "    Steam Library -> right-click Leaf it Alone -> Properties -> Updates"
+            Write-Host "    -> uncheck 'Keep game saves in the Steam Cloud'"
+        }
+    } catch {
+        Write-Error "M3 failed: $($_.Exception.Message)"
+        Write-Host "Rolling back prior steps." -ForegroundColor Yellow
+        Rollback-Install -steamInfo $steamInfo -saveInfo $saveInfo
+        if ($Elevated) { Read-Host "Press Enter to close" | Out-Null }
+        exit 7
+    }
+} else {
+    Write-Warning "[M3] -SkipSaves set: not isolating Saves/ folder."
 }
 
 # ---- manifest ----
 New-Item -Path $StateDir -ItemType Directory -Force | Out-Null
-$milestone = if ($SkipSteam) { 'M1' } else { 'M2' }
+$milestones = @('M1')
+if (-not $SkipSteam) { $milestones += 'M2' }
+if (-not $SkipSaves) { $milestones += 'M3' }
+$milestone = $milestones -join '+'
+
 $manifest = [ordered]@{
-    schemaVersion   = 2
+    schemaVersion   = 3
     milestone       = $milestone
     installedAt     = (Get-Date).ToUniversalTime().ToString('o')
     gameExe         = $GameExe
@@ -192,11 +307,20 @@ $manifest = [ordered]@{
         proxySha256       = $steamInfo.proxySha256
         installedAt       = $steamInfo.installedAt
     } } else { $null }
-    saveIsolation   = $null   # M3
+    saveIsolation   = if ($saveInfo) { [ordered]@{
+        originalPath   = $saveInfo.originalPath
+        backupPath     = $saveInfo.backupPath
+        movedAt        = $saveInfo.movedAt
+        preMoveExists  = $saveInfo.preMoveExists
+        preMoveCount   = $saveInfo.preMoveCount
+        preMoveBytes   = $saveInfo.preMoveBytes
+        steamCloudVdf  = $saveInfo.steamCloudVdf
+        preMoveFiles   = $saveInfo.preMoveFiles
+    } } else { $null }
     overlayDll      = $null   # M4
     mods            = @()     # M5+ content mods registered here
 }
-($manifest | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $ManifestPath -Encoding UTF8
+($manifest | ConvertTo-Json -Depth 10) | Set-Content -LiteralPath $ManifestPath -Encoding UTF8
 
 Write-Host ""
 Write-Host "OK - safe-base installed ($milestone)." -ForegroundColor Green
@@ -208,15 +332,23 @@ if ($steamInfo) {
     Write-Host "               proxy = $($steamInfo.proxySize) bytes"
     Write-Host "               backup = $($steamInfo.realDllBackupPath) ($($steamInfo.realDllSize) bytes)"
 }
+if ($saveInfo) {
+    Write-Host "  Saves      : $($saveInfo.originalPath)"
+    Write-Host "               backup = $($saveInfo.backupPath)"
+    Write-Host "               pre-move: $($saveInfo.preMoveCount) file(s), $($saveInfo.preMoveBytes) bytes"
+}
 Write-Host "  Manifest   : $ManifestPath"
 Write-Host ""
 Write-Host "Test it: launch the game. Steam will still start it (loopback IPC"
 Write-Host "in a separate process). Inside the game, the Steamworks layer should"
 Write-Host "come up in a 'no Steam' or offline state - achievements, stats and"
 Write-Host "leaderboards stop working, because SteamAPI_Init returned false."
+Write-Host "The game will also start with no prior saves (Saves/ was moved aside),"
+Write-Host "so any progression is written to a throwaway folder."
 Write-Host ""
 Write-Host "If the game refuses to launch or crashes: run safe-base\uninstall.ps1."
-Write-Host "It will restore the real steam_api64.dll and remove the firewall rule."
+Write-Host "It will restore the real steam_api64.dll, restore your Saves/ folder,"
+Write-Host "and remove the firewall rule (parking the modded Saves/ alongside)."
 Write-Host ""
 Write-Host "Check any time with: safe-base\status.ps1"
 

@@ -21,12 +21,11 @@ protected Unity IL2CPP build. Fully shipped, documented and videoed.
 
 ### `safe-base/`
 The **offline-safety framework**. Installs once, keeps modded play from ever
-touching the game's leaderboards. **Status: M1 + M2 landed, both tested
-end-to-end** — the firewall block AND the Steamworks stub proxy are working
-and reversible today. Verified in-game 2026-11-05: game launches normally with
-the proxy in place, leaderboard now renders empty (was populating via
-`Steam.exe` before M2). Two upload paths, both closed. Three more milestones
-(save isolation, DLL trip-wire, PS SDK) are staged as M3-M5:
+touching the game's leaderboards or your real save file. **Status: M1 + M2 +
+M3 landed** — the firewall block, the Steamworks stub proxy AND save
+isolation are implemented and reversible today. M1 and M2 were verified
+in-game 2026-11-05 (leaderboard renders empty, game launches normally).
+Three upload paths closed, one leak class mitigated:
 - **[M1 ✅]** Windows Firewall outbound-block on `Leaf it Alone.exe`,
   verified at install (rule + service + manifest). Closes the game's own
   HTTPS path.
@@ -35,9 +34,14 @@ the proxy in place, leaderboard now renders empty (was populating via
   — leaderboard upload, achievements, stats, cloud saves — because the game
   process never gets a valid interface to call. Game launches cleanly with
   the proxy in place; the in-game leaderboard renders empty.
-- **[M3]** **Save isolation** on install (real save moved aside, empty
-  `UserData/` made); the modded save is **discarded on uninstall** so queued
-  submissions never leak when you go back online.
+- **[M3 ✅]** **Save isolation**. `install.ps1` moves the game's
+  `AppData\LocalLow\Eternity\Leaf it Alone\Saves\` folder to
+  `%LOCALAPPDATA%\LeafItAloneSafe\backup\saves-<ts>\` and creates a fresh
+  empty placeholder. Modded progression writes there. `uninstall.ps1`
+  restores the original Saves/ (the modded one is **parked**, never
+  deleted). Refuses to run if the game is currently active. If Steam Cloud
+  is enabled on the game, install prints a warning with the click-path to
+  disable it manually (safe-base never edits Steam's own config).
 - **[M4]** A `version.dll` overlay that **refuses to run** unless all three
   preconditions hold, plus the live outbound `connect()` probe from inside
   the game's own process, and a persistent `OFFLINE · MODDED PLAY · SCORES
@@ -77,7 +81,7 @@ content-mods/<name>/
 | I want to… | Do this |
 |---|---|
 | Just see how the DLL-hijack overlay works | Follow [`overlay/README.md`](overlay/README.md) |
-| Try the M1 + M2 safety framework now (no content mods yet) | `safe-base/install.ps1` → play → `safe-base/uninstall.ps1`. Status any time: `safe-base/status.ps1` |
+| Try the M1 + M2 + M3 safety framework now (no content mods yet) | Close the game. `safe-base/install.ps1` → play → `safe-base/uninstall.ps1`. Status any time: `safe-base/status.ps1` |
 | Play the game with mods without polluting the leaderboard (M1-M5 all landed) | Install `safe-base/` once |
 | Actually change gameplay content (bigger bag, more leaves, faster seal) | Waiting on safe-base M5. Then: install `safe-base/`, then `apply.ps1` from a mod in [`content-mods/`](content-mods/README.md) |
 | Undo everything and go back to vanilla | Currently `safe-base/uninstall.ps1`. Once content mods exist: `safe-base/uninstall-all.ps1` (M5) — reverts every registered content mod, restores your original save, removes the firewall rule |

@@ -75,9 +75,18 @@ $real = "B:\SteamLibrary\steamapps\common\Leaf it Alone\Leaf it Alone_Data\Plugi
   executable; the game's rule doesn't apply and neither does this DLL — the
   client is not running our proxy). This proxy stops the *game* from
   *asking* Steam to do things. Steam's own outbound sync of what it already
-  knew about is unaffected. Which is why **M3** (save isolation) is still
-  needed: if the real save has queued submissions from before you installed
-  safe-base, Steam will still ship them when it next gets a chance.
+  knew about is unaffected.
+- Steam client's own cloud-sync schedule for the game's `Saves/` folder
+  (`steam_autocloud.vdf` marks the folder as a cloud-sync target). Even with
+  this proxy installed, Steam may still push or pull files there on its own
+  timer.
+
+**M3 (save isolation) covers the residual case** by moving the entire
+`Saves/` folder into `%LOCALAPPDATA%\LeafItAloneSafe\backup\` before the
+game starts, and creating an empty placeholder. The `steam_autocloud.vdf`
+marker moves with the backup, so the placeholder has no cloud identity for
+Steam to sync against. Install also warns you to disable Steam Cloud
+manually if the marker was present.
 
 ## Verifying manually
 

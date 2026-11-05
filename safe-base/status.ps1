@@ -86,14 +86,64 @@ if ($m -and $m.steamProxy) {
     Write-Host "  not installed"
 }
 
+# --- save isolation state (M3) ---
+Write-Host ""
+Write-Host "[M3] Save isolation layer:"
+if ($m -and $m.saveIsolation) {
+    $orig  = $m.saveIsolation.originalPath
+    $bk    = $m.saveIsolation.backupPath
+    $empty = Join-Path $orig '.safebase-empty'
+    Write-Host "  source         : $orig"
+    if (Test-Path -LiteralPath $orig) {
+        $kids = Get-ChildItem -LiteralPath $orig -Force -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -ne $empty }
+        if ($kids.Count -eq 0) {
+            Write-Host "  current state  : ISOLATED (empty placeholder present)" -ForegroundColor Green
+        } else {
+            Write-Host "  current state  : ACTIVE ($($kids.Count) file(s) in Saves/) - game has been played while modded" -ForegroundColor DarkGreen
+        }
+    } else {
+        Write-Host "  current state  : MISSING at $orig - install never ran, or user deleted it" -ForegroundColor Red
+    }
+    Write-Host "  placeholder    : $(if (Test-Path -LiteralPath $empty) { 'marker present' } else { 'marker absent' })"
+    Write-Host "  backup         : $bk"
+    if ($bk -and (Test-Path -LiteralPath $bk)) {
+        $bkKids = @(Get-ChildItem -LiteralPath $bk -Force -Recurse -File -ErrorAction SilentlyContinue)
+        $bkSum = [int64]0
+        foreach ($k in $bkKids) { $bkSum += $k.Length }
+        Write-Host "  backup present : yes ($($bkKids.Count) file(s), $bkSum bytes)" -ForegroundColor Green
+    } elseif ($bk) {
+        Write-Host "  backup present : MISSING - uninstall will not be able to restore originals" -ForegroundColor Red
+    } else {
+        Write-Host "  backup present : n/a (AllowMissing path - no prior Saves/ to back up)"
+    }
+    Write-Host "  pre-move info  : $($m.saveIsolation.preMoveCount) file(s), $($m.saveIsolation.preMoveBytes) bytes at install time"
+    if ($m.saveIsolation.steamCloudVdf) {
+        Write-Host "  Steam Cloud    : marker was present at install (steam_autocloud.vdf moved with backup)" -ForegroundColor Yellow
+        if (Test-SteamCloudMarker -SavePath $orig) {
+            Write-Host "                 !! a marker has REAPPEARED in the current Saves/ - Steam may be actively syncing" -ForegroundColor Red
+            Write-Host "                    Disable Steam Cloud for the game: Steam Library -> right-click Leaf it Alone -> Properties -> Updates"
+        }
+    } else {
+        Write-Host "  Steam Cloud    : marker absent at install time (no cloud sync configured for this account)"
+    }
+} elseif ($m) {
+    Write-Host "  manifest has no saveIsolation entry (installed with -SkipSaves? or pre-M3)" -ForegroundColor Yellow
+} else {
+    Write-Host "  not installed"
+}
+
 # --- verdict ---
 Write-Host ""
 $m1ok = [bool]($state.Rule -and $state.Rule.Enabled -eq 'True' -and $state.FwServiceStat -eq 'Running')
 $m2ok = [bool]($m -and $m.steamProxy -and (Classify-SteamDll -Path $m.steamProxy.realDllPath -ProxySha $m.steamProxy.proxySha256) -eq 'proxy')
+$m3ok = [bool]($m -and $m.saveIsolation -and $m.saveIsolation.backupPath -and (Test-Path -LiteralPath $m.saveIsolation.backupPath))
 if (-not $m) {
     Write-Host "VERDICT: not installed. Content mods that call Assert-SafeBaseActive will refuse to apply." -ForegroundColor Yellow
+} elseif ($m1ok -and $m2ok -and $m3ok) {
+    Write-Host "VERDICT: safe-base M1 + M2 + M3 active. Game's outbound TCP+UDP blocked; SteamAPI_Init will fail; Saves/ is isolated with the original safely backed up. Every game-process upload path is closed AND any modded progression writes to a throwaway folder." -ForegroundColor Green
 } elseif ($m1ok -and $m2ok) {
-    Write-Host "VERDICT: safe-base M1 + M2 active. Game's outbound TCP+UDP blocked; SteamAPI_Init will fail. Steamworks-based uploads (leaderboards, stats, achievements, cloud saves) cannot happen from the game's process." -ForegroundColor Green
+    Write-Host "VERDICT: safe-base M1 + M2 active, but M3 is not (backup missing or -SkipSaves install). Steamworks and web-service uploads are blocked, but modded play still writes to your real save. Fix: re-run install.ps1 without -SkipSaves, or run uninstall and reinstall." -ForegroundColor Yellow
 } elseif ($m1ok) {
     Write-Host "VERDICT: partial. M1 firewall rule is fine but the Steam proxy is not in place. Content mods that assume M2 will refuse; run install.ps1 again after fixing whatever broke M2 (currently: see [M2] above)." -ForegroundColor Yellow
 } else {
