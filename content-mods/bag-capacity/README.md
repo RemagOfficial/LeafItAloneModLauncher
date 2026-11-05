@@ -1,17 +1,19 @@
 # bag-capacity — bigger leaf bags
 
 The first content mod shipped on top of [`safe-base`](../../safe-base/README.md).
-It **doubles every leaf-bag capacity**:
+It **makes every leaf bag bigger** — to any size you want, via a config file.
+The default doubles every capacity:
 
-| Bag | Vanilla | With this mod |
+| Bag | Vanilla | Default (x2) |
 |---|---:|---:|
 | Small  |  50 | **100** |
 | Medium | 200 | **400** |
 | Big    | 500 | **1000** |
 | Giant  | 800 | **1600** |
 
-Fewer trips to the bin, more raking. Pass `-Scale` to `apply.ps1` for a
-different multiplier (e.g. `-Scale 4`).
+Fewer trips to the bin, more raking. Change the multiplier or set each bag
+individually in [`bag-capacity.json`](bag-capacity.json) (see
+**Configuration** below) — no code, no re-install.
 
 ## What it actually changes
 
@@ -61,8 +63,9 @@ back exactly as it was.
 ```powershell
 # close the game first
 cd content-mods\bag-capacity
-.\apply.ps1                 # previews, asks you to type YES
-# or unattended:  .\apply.ps1 -Scale 2 -Yes
+.\apply.ps1                 # reads bag-capacity.json, previews, asks you to type YES
+# or unattended:  .\apply.ps1 -Yes            (sizes from bag-capacity.json)
+# or one-off:     .\apply.ps1 -Scale 4 -Yes
 ```
 
 `apply.ps1` will:
@@ -73,6 +76,35 @@ cd content-mods\bag-capacity
    to prove the applied bytes are correct — if that check fails it restores the
    backup automatically;
 5. register the mod with safe-base so it can be undone.
+
+## Configuration
+
+Sizes come from **[`bag-capacity.json`](bag-capacity.json)** next to `apply.ps1`.
+Two modes:
+
+```jsonc
+// A. multiplier — scales the vanilla 50/200/500/800
+{ "mode": "multiplier", "multiplier": 3.0 }        // -> 150 / 600 / 1500 / 2400
+
+// B. sizes — set each bag exactly
+{ "mode": "sizes",
+  "sizes": { "small": 100, "medium": 500, "big": 1200, "giant": 3000 } }
+```
+
+To change sizes: **edit the JSON, then run `apply.ps1` again.** It notices the
+mod is already applied, reverts to vanilla first, re-patches from the pristine
+backup with your new numbers, and re-registers — so iterating is just *edit →
+apply → relaunch*. Nothing is ever stacked.
+
+Command-line flags override the config for a one-off without editing the file:
+
+```powershell
+.\apply.ps1 -Scale 4                     # x4 everything, this run
+.\apply.ps1 -Small 100 -Medium 500 -Big 1200 -Giant 3000   # explicit (give all four)
+.\apply.ps1 -Config D:\my\bagcap.json    # point at a different config file
+```
+
+Precedence: explicit `-Small/-Medium/-Big/-Giant` > `-Scale` > the config file.
 
 ## Uninstall
 
@@ -122,9 +154,10 @@ C:\Python312\python.exe patch_bag_capacity.py --verify-only `
 
 | File | Role |
 |---|---|
-| `apply.ps1`   | installer: safety asserts → stage → backup bundle+catalog → null catalog CRC → apply → verify → register |
+| `bag-capacity.json` | the config: a multiplier or explicit per-bag sizes (edit this, not code) |
+| `apply.ps1`   | installer: safety asserts → resolve sizes → (revert if already applied) → stage → backup bundle+catalog → null catalog CRC → apply → verify → register |
 | `revert.ps1`  | undo via the safe-base registry (byte-identical restore of both files) |
-| `patch_bag_capacity.py` | the UnityPy editor (self-verifying, refuses non-vanilla input) |
+| `patch_bag_capacity.py` | the UnityPy editor (explicit sizes or scale; self-verifying, refuses non-vanilla input) |
 | `patch_catalog.py` | nulls this bundle's CRC in `aa/catalog.bin` (guarded: unique match + adjacent size) |
 
 ## License

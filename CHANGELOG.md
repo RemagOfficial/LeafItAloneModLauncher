@@ -196,6 +196,18 @@ release notes inside its README.
   both back on any failure; `revert.ps1` restores both byte-for-byte. Verified by
   an extended round-trip smoke test (9/9, including byte-identical revert of the
   665 KB catalog).
+- **`content-mods/` M7 — bag-capacity is now configurable.** New
+  `bag-capacity.json` sets sizes either by a `multiplier` (default x2) or as
+  explicit per-bag `sizes`. `apply.ps1` resolves targets with precedence
+  *explicit `-Small/-Medium/-Big/-Giant` > `-Scale` > config*, and — key for
+  iterating — if the mod is already applied it now `Revert-Mod`s to vanilla
+  first, then re-patches from the pristine backup, so **edit config → `apply.ps1`
+  → relaunch** changes values with no stacking and no manual revert.
+  `patch_bag_capacity.py` gained explicit-target args (still refuses
+  non-vanilla input, self-verifies, rejects zero/negative). Version bumped to
+  1.2.0. Offline smoke test 11/11 (patcher round-trip + guards + all precedence
+  paths). `content-mods/README.md` records "externalise the numbers" as a rule
+  for future mods.
 
 ## 1.0.0
 Initial release: the `overlay/` example.

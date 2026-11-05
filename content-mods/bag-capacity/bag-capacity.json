@@ -1,0 +1,15 @@
+{
+  "_comment": "bag-capacity config. Edit this file, then run apply.ps1 (it reverts to vanilla and re-patches automatically). apply.ps1 CLI flags override what's here.",
+
+  "mode": "multiplier",
+
+  "_mode_notes": "mode = 'multiplier' uses 'multiplier' on the vanilla 50/200/500/800; mode = 'sizes' uses the four explicit 'sizes' values below.",
+  "multiplier": 2.0,
+
+  "sizes": {
+    "small": 100,
+    "medium": 400,
+    "big": 1000,
+    "giant": 1600
+  }
+}

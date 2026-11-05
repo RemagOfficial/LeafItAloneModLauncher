@@ -4,8 +4,9 @@ patch_bag_capacity.py - the bag-capacity content mod's actual editor.
 
 Rewrites the four `*BagCapacity` MonoBehaviour `capacity` int fields in
 Leaf it Alone's coreassets metadata bundle. Reads TypeTrees (preserved across
-this game's bundles despite IL2CPP metadata encryption), multiplies each
-`capacity` by a scale factor (default 2.0), writes the typetrees back, repacks
+this game's bundles despite IL2CPP metadata encryption), sets each `capacity`
+to an explicit value (or vanilla x a scale factor, default 2.0), writes the
+typetrees back, repacks
 the bundle into --out-dir, then RE-OPENS the output and verifies the new values
 before exiting 0. A non-zero exit means nothing was written and the caller
 should leave the game folder untouched.
@@ -50,10 +51,30 @@ def read_capacities(bundle_path):
     return found
 
 
-def patch(in_path, out_dir, scale):
+def patch(in_path, out_dir, scale=2.0, targets=None):
+    """Patch the four bag capacities.
+
+    targets: dict {SmallBagCapacity/MediumBagCapacity/BigBagCapacity/GiantBagCapacity -> int},
+             used verbatim when given. Otherwise each vanilla value is multiplied by `scale`.
+    The input bundle must still hold the vanilla values (revert first if it doesn't),
+    so this always patches from a known baseline and never double-applies.
+    """
     if not os.path.isfile(in_path):
         sys.exit(f"ERROR: input bundle not found: {in_path}")
     os.makedirs(out_dir, exist_ok=True)
+
+    # Resolve the requested final values.
+    if targets is not None:
+        if set(targets) != set(EXPECTED):
+            sys.exit(f"ERROR: targets must set exactly {sorted(EXPECTED)}; got {sorted(targets)}")
+        want = {}
+        for name, v in targets.items():
+            v = int(v)
+            if v <= 0:
+                sys.exit(f"ERROR: target for {name} must be a positive int (got {v})")
+            want[name] = v
+    else:
+        want = {name: int(round(orig * scale)) for name, orig in EXPECTED.items()}
 
     # Pre-flight: the input must look like the vanilla bundle we expect.
     before = read_capacities(in_path)
@@ -73,11 +94,11 @@ def patch(in_path, out_dir, scale):
             continue
         orig = int(tree["capacity"])
         if orig != EXPECTED[name]:
-            # Already modified (by this or another mod). Do not double-scale.
+            # Already modified (by this or another mod). Patch from a clean baseline.
             sys.exit(f"ERROR: {name} capacity is {orig}, not the expected vanilla "
                      f"{EXPECTED[name]}. Revert any prior mod first (revert.ps1 / "
                      f"uninstall-all.ps1) before re-applying.")
-        new = int(round(orig * scale))
+        new = want[name]
         tree["capacity"] = new
         obj.save_typetree(tree)
         changes.append({"name": name, "from": orig, "to": new})
@@ -112,7 +133,8 @@ def patch(in_path, out_dir, scale):
     report = {
         "in": in_path,
         "out": out_path,
-        "scale": scale,
+        "mode": "targets" if targets is not None else "scale",
+        "scale": scale if targets is None else None,
         "changes": changes,
         "verified": True,
         "input_size": os.path.getsize(in_path),
@@ -123,10 +145,14 @@ def patch(in_path, out_dir, scale):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Multiply the four Leaf it Alone bag capacities.")
+    ap = argparse.ArgumentParser(description="Set the four Leaf it Alone bag capacities (multiplier or explicit).")
     ap.add_argument("--in", dest="in_path", required=True, help="source .bundle (read-only)")
     ap.add_argument("--out-dir", dest="out_dir", help="dir to write the patched bundle into (required unless --verify-only)")
-    ap.add_argument("--scale", type=float, default=2.0, help="multiplier (default 2.0)")
+    ap.add_argument("--scale", type=float, default=2.0, help="multiplier vs vanilla 50/200/500/800 (default 2.0); ignored if any of --small/--medium/--big/--giant is given")
+    ap.add_argument("--small", type=int, help="explicit SmallBagCapacity value")
+    ap.add_argument("--medium", type=int, help="explicit MediumBagCapacity value")
+    ap.add_argument("--big", type=int, help="explicit BigBagCapacity value")
+    ap.add_argument("--giant", type=int, help="explicit GiantBagCapacity value")
     ap.add_argument("--verify-only", action="store_true", help="just print current capacities and exit")
     args = ap.parse_args()
 
@@ -136,7 +162,22 @@ def main():
 
     if not args.out_dir:
         ap.error("--out-dir is required unless --verify-only is set")
-    patch(args.in_path, args.out_dir, args.scale)
+
+    explicit = [args.small, args.medium, args.big, args.giant]
+    if any(v is not None for v in explicit):
+        missing = [lbl for lbl, v in zip(("small", "medium", "big", "giant"), explicit) if v is None]
+        if missing:
+            ap.error("when giving explicit sizes you must give all of --small/--medium/--big/--giant "
+                     "(missing: %s)" % ",".join(missing))
+        targets = {
+            "SmallBagCapacity": args.small,
+            "MediumBagCapacity": args.medium,
+            "BigBagCapacity": args.big,
+            "GiantBagCapacity": args.giant,
+        }
+        patch(args.in_path, args.out_dir, targets=targets)
+    else:
+        patch(args.in_path, args.out_dir, scale=args.scale)
 
 
 if __name__ == "__main__":

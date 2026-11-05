@@ -105,6 +105,13 @@ Revert-Mod -Name "bag-capacity"     # restores byte-identical original + unregis
   so revert restores both.
 - **Ship no game files.** Bundle-editing patches run on the user's own
   bundles. Only `patch.py` and the scripts are published.
+- **Externalise the numbers.** Each mod reads a `<mod>.json` config (a
+  multiplier and/or explicit per-field values) so balancing needs no code edit.
+  `apply.ps1` computes the targets from *CLI override → config*, and if the mod
+  is already applied it calls `Revert-Mod` first, so **edit config → `apply.ps1`
+  → relaunch** iterates cleanly with no stacking (see
+  [`bag-capacity/`](bag-capacity/)). Always re-patch from a known vanilla
+  baseline (the pristine backup), never from the already-modded live file.
 - **Do not** try to disable leaderboards / achievements / Steam within a
   content mod. The base does it. If a mod needs a gameplay-only "no scoring
   this run" flag, use in-game rules (e.g. set `leavesCount = 0` on a test
@@ -114,7 +121,7 @@ Revert-Mod -Name "bag-capacity"     # restores byte-identical original + unregis
 
 | Mod | What it changes | Bundle(s) | Field(s) |
 |---|---|---|---|
-| `bag-capacity/` ✅ **(shipped, M6)** | Bigger leaf bags (x2 by default) | `coreassets_assets_meta_*` | `capacity` on 4 MonoBehaviours (Small=50, Med=200, Big=500, Giant=800) |
+| `bag-capacity/` ✅ **(shipped, M6 + config M7)** | Bigger leaf bags — configurable (multiplier or per-bag) | `coreassets_assets_meta_*` | `capacity` on 4 MonoBehaviours (Small=50, Med=200, Big=500, Giant=800) |
 | `bag-speed/` | Faster seal & empty | `coreassets_assets_actors_*` | `sealingTime`, `emptyingDuration` on each `*LeafBag` |
 | `more-leaves/` | Denser levels | `coreassets_assets_areas*` | `leavesCount` per area |
 | `instant-seal/` | QoL: no seal delay | same as `bag-speed/` | set `sealingTime = 0.0` |
