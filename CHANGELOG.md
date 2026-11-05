@@ -140,6 +140,31 @@ release notes inside its README.
   pixels, clean with the 8px black outline). HUD panel fonts unchanged.
   Rebuilt: 188 416 bytes, SHA-256
   `8342659AF2385F4E4CF8BBF813B8DF99BE3F5E6FDB8525F2B1C21D32964CD972`.
+- **`safe-base/` M5 landed (2026-11-05)** — the `base.psm1` SDK, the
+  `mods.json` content-mod registry and `uninstall-all.ps1`. `base.psm1` is a
+  **self-contained** module (no repo dependency) that `install.ps1` now deploys
+  to `%LOCALAPPDATA%\LeafItAloneSafe\base.psm1`; a content mod imports that one
+  file and inherits the whole safety story. Exports:
+  `Assert-SafeBaseActive`, `Assert-SafePreconditions` (re-verifies M1 rule +
+  M2 proxy SHA + M3 placeholder + M4 overlay SHA in one call and throws with
+  every failure listed), `Backup-Original` (snapshot a file *before* a mod
+  overwrites/adds it, into `mod-backups\<mod>\`), `Register-Mod`,
+  `Get-SafeBaseModRegistry`, `Restore-ModFiles` (park-modified-then-restore,
+  never deletes, idempotent by SHA, removes mod-added files), `Unregister-Mod`,
+  `Revert-Mod`, `Test-GameRunning`, `Get-SafeBasePaths`. The registry lives in
+  a separate `mods.json` so registering a mod never rewrites the safety
+  manifest. `install.ps1` bumps the manifest to `schemaVersion` 5 with a new
+  `sdk` block and a `[M5]` deploy step (rolls back cleanly, exit code 9).
+  `uninstall.ps1`'s content-mod guard now reads the live `mods.json` and it
+  removes the deployed SDK with the manifest; `status.ps1` gains an `[M5]`
+  registry + SDK section and a verdict note. New `uninstall-all.ps1` reverts
+  every registered mod then tears down the base in one elevated pass.
+  `recheck.ps1` from the original roadmap was dropped — M4's in-DLL startup
+  probe and `Assert-SafePreconditions` already cover it. Verified with an
+  isolated round-trip smoke test in a temp sandbox (all 20 checks pass:
+  register → revert restores originals byte-for-byte, added files are parked
+  not deleted, revert idempotent, unhealthy base makes
+  `Assert-SafePreconditions` throw).
 - First content mod planned: `content-mods/bag-capacity/` (M6).
 
 ## 1.0.0

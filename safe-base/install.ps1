@@ -26,10 +26,16 @@
 #      Saves/ isolation marker, live connect(1.1.1.1:443) probe). Any prior
 #      version.dll / LeafOverlay.ini in the game folder is backed up and
 #      restored on uninstall. (M4)
-#  10. Writes an install manifest at %LOCALAPPDATA%\LeafItAloneSafe\manifest.json
+#  10. Deploys the safe-base SDK (base.psm1) into
+#      %LOCALAPPDATA%\LeafItAloneSafe\base.psm1 so content mods can
+#      Import-Module it and inherit Assert-SafeBaseActive /
+#      Assert-SafePreconditions / Backup-Original / Register-Mod / Revert-Mod.
+#      The content-mod registry itself is a separate mods.json (created lazily
+#      by the SDK); the safety manifest is never rewritten by mod registration.
+#  11. Writes an install manifest at %LOCALAPPDATA%\LeafItAloneSafe\manifest.json
 #      recording everything needed to reverse the install.
 #
-# Any step 6-10 failure triggers a rollback of prior steps (overlay + proxy
+# Any step 6-11 failure triggers a rollback of prior steps (overlay + proxy
 # removed, firewall rule removed, Saves/ restored if we got that far). Nothing
 # is left half-installed.
 #
@@ -109,7 +115,11 @@ if (-not (Test-IsAdmin)) {
         Write-Host "     Any existing version.dll / LeafOverlay.ini is backed"
         Write-Host "     up under $BackupDir\overlay\ and restored on uninstall."
     }
-    Write-Host "  6. Write an install manifest to:"
+    Write-Host "  6. Deploy the safe-base SDK to:"
+    Write-Host "       $SdkDeployedPath"
+    Write-Host "     Content mods Import-Module it so they can verify the safety"
+    Write-Host "     stack and register their file backups before touching the game."
+    Write-Host "  7. Write an install manifest to:"
     Write-Host "       $ManifestPath"
     Write-Host ""
     Write-Host "Reversible any time with: safe-base\uninstall.ps1"
@@ -345,16 +355,33 @@ if (-not $SkipOverlay) {
     Write-Warning "[M4] -SkipOverlay set: not installing version.dll banner overlay."
 }
 
+# ---- M5 - deploy the base.psm1 SDK ----
+$sdkInfo = $null
+try {
+    Write-Host "[M5] Deploying safe-base SDK (base.psm1)..." -ForegroundColor Cyan
+    $sdkInfo = Install-BaseSdk -Source $SdkSource -Dest $SdkDeployedPath
+    Write-Host "       deployed -> $($sdkInfo.deployedPath)"
+    Write-Host "       sha256     = $($sdkInfo.sourceSha256)"
+    Write-Host "       content mods import it and call Assert-SafePreconditions before touching the game."
+} catch {
+    Write-Error "M5 failed: $($_.Exception.Message)"
+    Write-Host "Rolling back prior steps." -ForegroundColor Yellow
+    Rollback-Install -steamInfo $steamInfo -saveInfo $saveInfo -overlayInfo $overlayInfo
+    if ($Elevated) { Read-Host "Press Enter to close" | Out-Null }
+    exit 9
+}
+
 # ---- manifest ----
 New-Item -Path $StateDir -ItemType Directory -Force | Out-Null
 $milestones = @('M1')
 if (-not $SkipSteam)   { $milestones += 'M2' }
 if (-not $SkipSaves)   { $milestones += 'M3' }
 if (-not $SkipOverlay) { $milestones += 'M4' }
+if ($sdkInfo)          { $milestones += 'M5' }
 $milestone = $milestones -join '+'
 
 $manifest = [ordered]@{
-    schemaVersion   = 4
+    schemaVersion   = 5
     milestone       = $milestone
     installedAt     = (Get-Date).ToUniversalTime().ToString('o')
     gameExe         = $GameExe
@@ -403,7 +430,17 @@ $manifest = [ordered]@{
         priorIniBackup     = $overlayInfo.priorIniBackup
         installedAt        = $overlayInfo.installedAt
     } } else { $null }
-    mods            = @()     # M5+ content mods registered here
+    sdk             = if ($sdkInfo) { [ordered]@{
+        deployedPath  = $sdkInfo.deployedPath
+        sourcePath    = $sdkInfo.sourcePath
+        sourceSize    = $sdkInfo.sourceSize
+        sourceSha256  = $sdkInfo.sourceSha256
+        deployedAt    = $sdkInfo.deployedAt
+        modsPath      = $sdkInfo.modsPath
+        modBackupRoot = $sdkInfo.modBackupRoot
+    } } else { $null }
+    # Content mods are tracked in a separate mods.json (the SDK's registry),
+    # NOT here - registering a mod must never rewrite the safety manifest.
 }
 ($manifest | ConvertTo-Json -Depth 10) | Set-Content -LiteralPath $ManifestPath -Encoding UTF8
 
@@ -429,6 +466,11 @@ if ($overlayInfo) {
     Write-Host "               a red one when any fails. Log: $((Split-Path -Parent $overlayInfo.versionDllPath))\LeafOverlay.log"
 }
 Write-Host "  Manifest   : $ManifestPath"
+if ($sdkInfo) {
+    Write-Host "  SDK        : $($sdkInfo.deployedPath)"
+    Write-Host "               content mods: Import-Module this, then Assert-SafePreconditions"
+    Write-Host "               registry: $($sdkInfo.modsPath) (created when the first mod registers)"
+}
 Write-Host ""
 Write-Host "Test it: launch the game. Steam will still start it (loopback IPC"
 Write-Host "in a separate process). Inside the game, the Steamworks layer should"
@@ -438,10 +480,10 @@ Write-Host "The game will also start with no prior saves (Saves/ was moved aside
 Write-Host "so any progression is written to a throwaway folder."
 if ($overlayInfo) {
     Write-Host "The persistent OFFLINE banner across the top-centre of the screen"
-    Write-Host "is drawn by safe-base's overlay DLL. Green means every preflight"
-    Write-Host "check passed; red means one failed and the reason is on the"
-    Write-Host "banner and in LeafOverlay.log. The F9 toggle hides the HUD panel"
-    Write-Host "but NOT the banner."
+    Write-Host "is drawn by safe-base's overlay DLL in minimal banner-only mode:"
+    Write-Host "a plain pale-green line when every preflight check passed, red"
+    Write-Host "with the reason when one failed. There is no HUD panel and F9"
+    Write-Host "does nothing - the banner can never be hidden while safe-base is on."
 }
 Write-Host ""
 Write-Host "If the game refuses to launch or crashes: run safe-base\uninstall.ps1."

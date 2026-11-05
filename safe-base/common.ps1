@@ -14,6 +14,16 @@ Set-Variable -Name 'SteamProxySource' -Value (Join-Path $PSScriptRoot 'steam_pro
 # via `um scan` and by inspecting the real install on this machine.
 Set-Variable -Name 'SaveRelSegments' -Value @('Eternity', 'Leaf it Alone', 'Saves') -Option Constant
 Set-Variable -Name 'SteamCloudMarker' -Value 'steam_autocloud.vdf' -Option Constant
+# M5 - content-mod registry + SDK. base.psm1 is the self-contained SDK that
+# install.ps1 deploys into StateDir; content mods import it from there. The
+# registry (mods.json) is separate from the safety manifest so registering a
+# mod never rewrites the manifest. These MUST match the recomputed paths in
+# base.psm1 (it does not dot-source this file, being shipped standalone).
+Set-Variable -Name 'SdkSource'          -Value (Join-Path $PSScriptRoot 'base.psm1') -Option Constant
+Set-Variable -Name 'SdkDeployedPath'    -Value (Join-Path $StateDir 'base.psm1') -Option Constant
+Set-Variable -Name 'ModsRegistryPath'   -Value (Join-Path $StateDir 'mods.json') -Option Constant
+Set-Variable -Name 'ModBackupRoot'      -Value (Join-Path $StateDir 'mod-backups') -Option Constant
+Set-Variable -Name 'SafeBaseSaveMarker' -Value '.safebase-empty' -Option Constant
 
 function Test-IsAdmin {
     $id = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -504,5 +514,59 @@ function Restore-VersionOverlay {
     }
 
     return $info
+}
+
+# ---------------------------------------------------------------------------
+# M5 - base.psm1 SDK deploy + content-mod registry readers
+# ---------------------------------------------------------------------------
+
+# Deploy the self-contained SDK into StateDir so content mods can
+# Import-Module "$env:LOCALAPPDATA\LeafItAloneSafe\base.psm1". Overwriting a
+# previously deployed copy is fine (uninstall deletes it). Returns an info
+# hashtable install.ps1 stores in the manifest.
+function Install-BaseSdk {
+    param(
+        [Parameter(Mandatory)][string]$Source,
+        [Parameter(Mandatory)][string]$Dest
+    )
+    if (-not (Test-Path -LiteralPath $Source)) {
+        throw "SDK source missing at $Source (safe-base/base.psm1 should be in the repo)."
+    }
+    New-Item -Path $StateDir -ItemType Directory -Force | Out-Null
+    Copy-Item -LiteralPath $Source -Destination $Dest -Force
+    @{
+        deployedPath  = (Resolve-Path -LiteralPath $Dest).ProviderPath
+        sourcePath    = (Resolve-Path -LiteralPath $Source).ProviderPath
+        sourceSize    = (Get-Item -LiteralPath $Source).Length
+        sourceSha256  = Get-FileSha256 -Path $Dest
+        deployedAt    = (Get-Date).ToUniversalTime().ToString('o')
+        modsPath      = $ModsRegistryPath
+        modBackupRoot = $ModBackupRoot
+    }
+}
+
+# Remove the deployed SDK copy (uninstall). Never touches the repo original.
+function Restore-BaseSdk {
+    param([Parameter(Mandatory)][string]$Dest)
+    if (Test-Path -LiteralPath $Dest) {
+        Remove-Item -LiteralPath $Dest -Force
+        return $true
+    }
+    return $false
+}
+
+# Read the content-mod registry (mods.json) directly, WITHOUT importing the
+# module. Used by status.ps1 and uninstall.ps1's guard. Returns an array of
+# PSCustomObject mod entries (empty array when nothing is registered).
+function Get-ContentModRegistry {
+    param([string]$Path = $ModsRegistryPath)
+    if (-not (Test-Path -LiteralPath $Path)) { return @() }
+    try {
+        $j = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+    } catch {
+        throw "content-mod registry at $Path is unreadable: $($_.Exception.Message)"
+    }
+    if ($j -and $j.mods) { return @($j.mods) }
+    return @()
 }
 

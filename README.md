@@ -22,7 +22,8 @@ protected Unity IL2CPP build. Fully shipped, documented and videoed.
 ### `safe-base/`
 The **offline-safety framework**. Installs once, keeps modded play from ever
 touching the game's leaderboards or your real save file. **Status: M1 + M2 +
-M3 + M4 landed and in-game tested (2026-11-05).** The firewall block, the
+M3 + M4 landed and in-game tested, M5 (the `base.psm1` SDK + content-mod
+registry + `uninstall-all.ps1`) landed and smoke-tested (2026-11-05).** The firewall block, the
 Steamworks stub proxy AND save isolation are
 implemented, reversible and verified. The game launches normally, the
 leaderboard renders empty and a modded play-session writes to a throwaway
@@ -59,14 +60,22 @@ closed, one leak class mitigated, one visible-verifier added:
   any pre-existing `version.dll` (e.g. a standalone overlay install) before
   dropping ours; `uninstall.ps1` restores the overlay slot FIRST so your
   prior setup comes back before anything else changes.
-- **[M5]** A PowerShell SDK (`base.psm1`) with `Assert-SafeBaseActive`,
-  `Backup-Original`, `Register-Mod` / `Unregister-Mod` that content mods
-  import — so no content mod ever has to repeat any of this.
+- **[M5 ✅]** A **self-contained** PowerShell SDK (`base.psm1`) that
+  `install.ps1` deploys to `%LOCALAPPDATA%\LeafItAloneSafe\base.psm1`, plus a
+  separate `mods.json` content-mod registry and `uninstall-all.ps1`. Content
+  mods import that one file and get `Assert-SafeBaseActive`,
+  `Assert-SafePreconditions` (re-checks all four layers right now),
+  `Backup-Original`, `Register-Mod` / `Unregister-Mod`, `Restore-ModFiles` and
+  `Revert-Mod` — so no content mod ever repeats any of the safety code, and
+  every file it touches is backed up and reversible. `uninstall.ps1` refuses
+  while any mod is registered; `uninstall-all.ps1` reverts them all then tears
+  down the base.
 
 Install `safe-base` once. Content mods depend on it. **If you plan to change
-in-game numbers, install the base first** (but content mods themselves need
-M5 to be safe to distribute — see the roadmap in
-[`safe-base/README.md`](safe-base/README.md)).
+in-game numbers, install the base first** — M5 is landed, so the SDK content
+mods build on is in place; the first real content mod (`bag-capacity`, M6) is
+the SDK's end-to-end test. See the roadmap in
+[`safe-base/README.md`](safe-base/README.md).
 
 ### `content-mods/`
 Small patchers that change what's actually *in* the game — data-driven edits to
@@ -94,10 +103,11 @@ content-mods/<name>/
 | I want to… | Do this |
 |---|---|
 | Just see how the DLL-hijack overlay works | Follow [`overlay/README.md`](overlay/README.md) |
-| Try the M1 + M2 + M3 + M4 safety framework now (no content mods yet) | Close the game. `safe-base/install.ps1` → play (green banner appears at top-centre) → `safe-base/uninstall.ps1`. Status any time: `safe-base/status.ps1` |
+| Try the M1 + M2 + M3 + M4 + M5 safety framework now (no content mods yet) | Close the game. `safe-base/install.ps1` → play (green banner appears at top-centre) → `safe-base/uninstall.ps1`. Status any time: `safe-base/status.ps1` |
+| Back out of everything (mods + base) in one go | `safe-base/uninstall-all.ps1` — reverts every registered content mod, then uninstalls the base |
 | Play the game with mods without polluting the leaderboard (M1-M5 all landed) | Install `safe-base/` once |
-| Actually change gameplay content (bigger bag, more leaves, faster seal) | Waiting on safe-base M5. Then: install `safe-base/`, then `apply.ps1` from a mod in [`content-mods/`](content-mods/README.md) |
-| Undo everything and go back to vanilla | Currently `safe-base/uninstall.ps1`. Once content mods exist: `safe-base/uninstall-all.ps1` (M5) — reverts every registered content mod, restores your original save, removes the firewall rule |
+| Actually change gameplay content (bigger bag, more leaves, faster seal) | The SDK is ready (M5 landed); the first mod (`bag-capacity`, M6) is pending. Then: install `safe-base/`, then `apply.ps1` from a mod in [`content-mods/`](content-mods/README.md) |
+| Undo everything and go back to vanilla | `safe-base/uninstall-all.ps1` — reverts every registered content mod, restores your original save, removes the firewall rule LAST. With no mods applied it's equivalent to `safe-base/uninstall.ps1`. |
 
 ## Why the split exists
 

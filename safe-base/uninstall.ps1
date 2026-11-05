@@ -8,10 +8,10 @@
 #   * Then restores the real steam_api64.dll from backup.
 #   * Finally removes the firewall rule LAST, so the network stays blocked
 #     until file state is fully vanilla.
-#   * Removes the manifest.
+#   * Removes the deployed base.psm1 SDK (M5) and the manifest.
 #
-# Refuses if content mods are still registered (guard is live; the registry
-# fills up in M5).
+# Refuses if any content mods are still registered in mods.json (the M5
+# registry). Revert them first, or run uninstall-all.ps1.
 #
 # Self-elevates via UAC.
 
@@ -64,10 +64,12 @@ if ($running) {
     exit 6
 }
 
-# ---- content-mod guard (fires from M5 when mods actually register) ----
-if ($m -and $m.mods -and @($m.mods).Count -gt 0) {
-    $list = (@($m.mods | ForEach-Object { "- $($_.name)" }) -join "`n")
-    Write-Error "Content mods are still registered with safe-base:`n$list`n`nRevert them first (each mod's revert.ps1), or run uninstall-all.ps1 (M5) which reverts every registered mod and then uninstalls the base."
+# ---- content-mod guard (reads the M5 registry at mods.json) ----
+$regMods = @(Get-ContentModRegistry)
+if ($regMods.Count -gt 0) {
+    $list = ($regMods | ForEach-Object { "- $($_.name) v$($_.version)" }) -join "`n"
+    Write-Error "Content mods are still registered with safe-base:`n$list`n`nRevert them first (each mod's revert.ps1), or run uninstall-all.ps1 which reverts every registered mod and then uninstalls the base."
+    if ($Elevated) { Read-Host "Press Enter to close" | Out-Null }
     exit 5
 }
 
@@ -95,7 +97,7 @@ if (-not $Yes) {
     }
     $n++
     Write-Host "  $n. Remove firewall rule '$RuleName' (LAST - network stays blocked until files are vanilla)."
-    if ($haveManifest) { $n++; Write-Host "  $n. Remove manifest." }
+    if ($haveManifest) { $n++; Write-Host "  $n. Remove the deployed base.psm1 SDK and the manifest." }
     Write-Host ""
     Write-Host "After uninstall, the game is fully online again. Any submissions"
     Write-Host "queued inside Steam's client (from before safe-base was installed)"
@@ -185,7 +187,10 @@ if ($state.Rule) {
     Write-Host "[M1] Rule '$RuleName' was not present (nothing to remove)." -ForegroundColor Yellow
 }
 
-# ---- STEP 5: remove manifest ----
+# ---- STEP 5: remove the deployed SDK + manifest ----
+if (Restore-BaseSdk -Dest $SdkDeployedPath) {
+    Write-Host "[M5] Removed deployed SDK: $SdkDeployedPath" -ForegroundColor Cyan
+}
 if ($haveManifest) {
     Remove-Item -LiteralPath $ManifestPath -Force
     Write-Host "       removed: $ManifestPath"

@@ -1,5 +1,6 @@
 # status.ps1 — read-only report of safe-base's state (firewall rule + steam_api64.dll
-# proxy + save isolation + version.dll overlay). No admin required.
+# proxy + save isolation + version.dll overlay + the M5 SDK/content-mod registry).
+# No admin required.
 
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\common.ps1"
@@ -17,15 +18,58 @@ if (Test-Path -LiteralPath $ManifestPath) {
         Write-Host "  installedAt    : $($m.installedAt)"
         Write-Host "  milestone      : $($m.milestone)"
         Write-Host "  gameExe        : $($m.gameExe)"
-        if ($m.mods -and @($m.mods).Count -gt 0) {
-            Write-Host "  registered mods:"
-            foreach ($mod in @($m.mods)) { Write-Host "    - $($mod.name)" }
-        } else {
-            Write-Host "  registered mods: (none yet)"
-        }
     }
 } else {
     Write-Host "Manifest         : (absent - safe-base not installed via install.ps1)"
+}
+
+# --- content-mod registry (M5, mods.json) ---
+Write-Host ""
+Write-Host "[M5] Content-mod registry:"
+try {
+    $regMods = @(Get-ContentModRegistry)
+} catch {
+    $regMods = $null
+    Write-Host "  registry       : UNREADABLE - $($_.Exception.Message)" -ForegroundColor Red
+}
+if ($regMods -ne $null) {
+    Write-Host "  file           : $ModsRegistryPath"
+    if ($regMods.Count -eq 0) {
+        Write-Host "  registered mods: (none)" -ForegroundColor DarkGray
+    } else {
+        Write-Host "  registered mods: $($regMods.Count)" -ForegroundColor Green
+        foreach ($mod in $regMods) {
+            $fc = @($mod.files).Count
+            Write-Host "    - $($mod.name) v$($mod.version)  ($fc file(s))  applied $($mod.appliedAt)"
+            foreach ($f in @($mod.files)) {
+                $kind = if ($f.originalExists) { 'replace' } else { 'added' }
+                Write-Host "        [$kind] $($f.targetPath)"
+            }
+        }
+    }
+}
+
+# --- SDK (M5, base.psm1) ---
+Write-Host ""
+Write-Host "[M5] Safe-base SDK (base.psm1):"
+if ($m -and $m.sdk) {
+    Write-Host "  deployed       : $($m.sdk.deployedPath)"
+    if (Test-Path -LiteralPath $m.sdk.deployedPath) {
+        $sh = Get-FileSha256 -Path $m.sdk.deployedPath
+        if ($sh -and $sh -eq $m.sdk.sourceSha256) {
+            Write-Host "                 PRESENT, matches installed SHA" -ForegroundColor Green
+        } else {
+            Write-Host "                 PRESENT but SHA differs (repo updated since install? re-run install to refresh)" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "                 MISSING - content mods cannot import the SDK. Re-run install.ps1." -ForegroundColor Red
+    }
+    Write-Host "  mods.json      : $ModsRegistryPath"
+    Write-Host "  mod backups  : $ModBackupRoot"
+} elseif ($m) {
+    Write-Host "  manifest has no sdk entry (pre-M5 install). Re-run install.ps1 to deploy the SDK." -ForegroundColor Yellow
+} else {
+    Write-Host "  not installed"
 }
 
 # --- live firewall state (M1) ---
@@ -187,11 +231,13 @@ $m1ok = [bool]($state.Rule -and $state.Rule.Enabled -eq 'True' -and $state.FwSer
 $m2ok = [bool]($m -and $m.steamProxy -and (Classify-SteamDll -Path $m.steamProxy.realDllPath -ProxySha $m.steamProxy.proxySha256) -eq 'proxy')
 $m3ok = [bool]($m -and $m.saveIsolation -and $m.saveIsolation.backupPath -and (Test-Path -LiteralPath $m.saveIsolation.backupPath))
 $m4ok = [bool]($m -and $m.versionOverlay -and (Test-Path -LiteralPath $m.versionOverlay.versionDllPath) -and (Test-Path -LiteralPath $m.versionOverlay.overlayIniPath))
+$m5ok = [bool]($m -and $m.sdk -and (Test-Path -LiteralPath $m.sdk.deployedPath))
 $allExpected = $m1ok -and $m2ok -and $m3ok -and $m4ok
 if (-not $m) {
     Write-Host "VERDICT: not installed. Content mods that call Assert-SafeBaseActive will refuse to apply." -ForegroundColor Yellow
 } elseif ($allExpected) {
-    Write-Host "VERDICT: safe-base M1 + M2 + M3 + M4 active. Game's outbound TCP+UDP blocked; SteamAPI_Init fails; Saves/ is isolated with the original safely backed up; version.dll banner runs and reports these states in-game." -ForegroundColor Green
+    $sdkNote = if ($m5ok) { "SDK (base.psm1) deployed, content mods can register." } else { "SDK not deployed (pre-M5 install): re-run install.ps1 before applying content mods." }
+    Write-Host "VERDICT: safe-base M1 + M2 + M3 + M4 active. Game's outbound TCP+UDP blocked; SteamAPI_Init fails; Saves/ is isolated with the original safely backed up; version.dll banner runs and reports these states in-game. $sdkNote" -ForegroundColor Green
 } elseif ($m1ok -and $m2ok -and $m3ok) {
     Write-Host "VERDICT: M1 + M2 + M3 active, M4 overlay missing or INI absent. The safety layers work but there is no on-screen banner. Fix: re-run install.ps1 with -SkipOverlay unset, or copy version.dll + LeafOverlay.ini back into the game folder." -ForegroundColor Yellow
 } elseif ($m1ok -and $m2ok) {

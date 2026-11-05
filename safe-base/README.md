@@ -1,14 +1,19 @@
 # `safe-base/` — Offline-safety framework
 
-**Status: M1 + M2 + M3 + M4 landed and in-game tested (2026-11-05). M4 adds
+**Status: M1 + M2 + M3 + M4 landed and in-game tested (2026-11-05); M5 (the
+`base.psm1` SDK + content-mod registry + `uninstall-all.ps1`) landed and
+smoke-tested. M4 adds
 the persistent OFFLINE banner and a one-shot in-game startup probe (the
 outbound `connect(1.1.1.1:443)` test only makes sense from inside the
 game's own process). In safe-base mode the overlay is **minimal**: no HUD
 panel at all, just the banner as plain outlined text so it doesn't distract
 during play. Together the four layers close every
 upload path the game process can initiate AND keep modded progression off
-your real save AND show you at a glance that the safety is active. M5-M6
-(PS SDK, first content mod) are still planned; roadmap at the bottom.**
+your real save AND show you at a glance that the safety is active. M5 makes
+that safety reusable: content mods import `base.psm1`, re-verify the stack,
+back up every file they touch, and register it so `uninstall-all.ps1` can
+reverse all of it. M6 (the first content mod, `bag-capacity`) is still
+planned; roadmap at the bottom.**
 
 Install this **before** any mod in `../content-mods/`.
 
@@ -139,16 +144,17 @@ On install, `install.ps1` (self-elevating):
    periodically.
    - Override with `-SkipOverlay` if you want M1-M3 only, or if you already
      run the standalone overlay and want safe-base to leave the slot alone.
-5. **[M5 planned]** Writes `%LOCALAPPDATA%\LeafItAloneSafe\manifest.json`
-   (install timestamp, backup paths, sentinels, list of applied content mods)
-   and `base.psm1` — the SDK content mods import. *(The manifest itself
-   landed early; only `base.psm1` and the content-mod registry are pending.)*
+5. **[M5 landed]** Deploys the SDK to `%LOCALAPPDATA%\LeafItAloneSafe\base.psm1`
+   and records it in `manifest.json` (`schemaVersion` 5, a new `sdk` block).
+   Content mods import that file; the content-mod registry itself is a separate
+   `mods.json` the SDK creates lazily on the first `Register-Mod`, so applying
+   or reverting a mod never rewrites the safety manifest.
 
 On uninstall, `uninstall.ps1`:
 
-1. Refuses if any content mods are still registered (`uninstall-all.ps1`
-   reverts them first, then does this; the guard fires from M5 when the
-   registry fills up).
+1. Refuses if any content mods are still registered in `mods.json`
+   (`uninstall-all.ps1` reverts them first, then does this; the guard reads
+   the live registry).
 2. Refuses if the game process is currently running.
 3. **[M4 landed]** Restores the overlay slot FIRST: our `version.dll` is
    deleted and the prior backup (if any) is moved back into place; a fresh
@@ -177,31 +183,77 @@ reinstall.
 
 ## SDK content mods use (`base.psm1`)
 
+`install.ps1` deploys a **self-contained** module to
+`%LOCALAPPDATA%\LeafItAloneSafe\base.psm1`. It does not depend on the repo, so
+a content mod imports exactly one file and inherits the whole safety story:
+
 ```powershell
-Assert-SafeBaseActive      # throws "install safe-base first" if the framework isn't present
-Assert-SafePreconditions   # re-verify firewall + steam-proxy + save isolation, right now
-Backup-Original <path>     # snapshot into %LOCALAPPDATA%\LeafItAloneSafe\mod-backups\<modname>\
-Register-Mod -Name X -Files @(...)
-Unregister-Mod -Name X
+Import-Module "$env:LOCALAPPDATA\LeafItAloneSafe\base.psm1" -DisableNameChecking
 ```
 
-Content mods import it via `%LOCALAPPDATA%\LeafItAloneSafe\base.psm1` — no
-need to duplicate any safety code.
+(`-DisableNameChecking` silences the benign "unapproved verbs" warning for the
+readable names like `Backup-Original` / `Revert-Mod`; the verbs are intentional.)
+
+| Function | What it does |
+|---|---|
+| `Assert-SafeBaseActive` | Throws unless the base is installed (manifest present). Call first. Returns the manifest object. |
+| `Assert-SafePreconditions` | Re-verifies the **entire** stack right now — M1 rule present+enforcing, M2 proxy at the recorded SHA, M3 `Saves/` placeholder present, M4 overlay at the recorded SHA — and throws with every failure listed. Call before touching a single game file. `-AllowMissingOverlay` for `-SkipOverlay` installs. |
+| `Backup-Original -ModName X -TargetPath <file>` | Snapshot one file the mod is about to overwrite (or add) into `%LOCALAPPDATA%\LeafItAloneSafe\mod-backups\X\`, **before** writing. Returns a record (target, `originalExists`, `originalSha256`, backup path). A path that doesn't exist yet records `originalExists=false`, which `Revert-Mod` turns into a clean delete. Collect these records. |
+| `Register-Mod -Name X -Version V -Files @(...)` | Write/replace X's entry in `mods.json` from the `Backup-Original` records (plus `appliedSha256` read back from the just-written file). |
+| `Get-SafeBaseModRegistry` | Array of registered mod entries (empty if none). |
+| `Restore-ModFiles -Name X` | Put X's files back: restore each pristine original (parking a modified current file, never deleting), and remove files X added (parked too). Already-original files are detected by SHA and skipped — idempotent. |
+| `Unregister-Mod -Name X` | Drop X's registry entry without touching files. |
+| `Revert-Mod -Name X` | `Restore-ModFiles` + `Unregister-Mod` — the whole revert. |
+| `Test-GameRunning` | `$true` if `Leaf it Alone` is running (mods must refuse to mutate live files). |
+| `Get-SafeBasePaths` | The SDK's view of its state locations (for logging). |
+
+A mod's `apply.ps1` in full:
+
+```powershell
+Import-Module "$env:LOCALAPPDATA\LeafItAloneSafe\base.psm1" -DisableNameChecking
+$ErrorActionPreference = 'Stop'
+if (Test-GameRunning) { throw "Close the game before applying this mod." }
+Assert-SafeBaseActive          # refuses to run outside the safe-base framework
+Assert-SafePreconditions       # refuses if any safety layer is broken right now
+
+# 1. back up EVERY file you will touch, before writing anything.
+$targets = @($bundlePath, $configPath)
+$records = foreach ($t in $targets) { Backup-Original -ModName 'my-mod' -TargetPath $t }
+
+# 2. write the mod's replacement / new files into place...
+Copy-Item $myNewBundle $bundlePath -Force
+
+# 3. register so safe-base can reverse it.
+Register-Mod -Name 'my-mod' -Version '1.0.0' -Files $records | Out-Null
+```
+
+And `revert.ps1` is one line:
+
+```powershell
+Import-Module "$env:LOCALAPPDATA\LeafItAloneSafe\base.psm1" -DisableNameChecking
+if (Test-GameRunning) { throw "Close the game first." }
+Revert-Mod -Name 'my-mod'
+```
+
+`uninstall-all.ps1` runs `Revert-Mod` for every registered mod, then `uninstall.ps1`.
+`uninstall.ps1` itself **refuses** while any mod is still registered, so the
+framework can never be torn out from under applied content.
+
 
 ## Commands
 
 | Command | Status | What it does |
 |---|---|---|
-| `install.ps1` | **M1 + M2 + M3 + M4 landed** | Firewall rule + Steam proxy + save isolation + overlay banner slot + verify + manifest. Self-elevates. Refuses if the game is running. Rolls back earlier steps if a later one fails. Flags: `-SavePath`, `-SkipSaves`, `-SkipOverlay`, `-AllowMissingSaves`. |
-| `uninstall.ps1` | **M1 + M2 + M3 + M4 landed** | Refuses if the game is running. Restores the overlay slot FIRST (any prior version.dll comes back; a foreign DLL is parked, never deleted), then Saves/ (modded parked), then the real `steam_api64.dll`, then removes the firewall rule LAST. Refuses if content mods are still applied (guard is live; registry fills up in M5). |
-| `status.ps1` | **M1 + M2 + M3 + M4 landed** | Read-only: firewall rule + service + Steam-proxy class (proxy / real / absent / unknown) + save-isolation state (isolated / active / missing / n/a) + overlay slot state (present / SHA match / `[safebase] Enabled` / prior backup integrity) + backup integrity + Steam Cloud rehydration warning + manifest + registered mods. No admin. |
-| `common.ps1` | shared | Dot-sourced helpers. M1: `Find-GameExe`, `Test-IsAdmin`, `Get-FirewallState`. M2: `Find-GameSteamDll`, `Install-SteamProxy`, `Restore-SteamProxy`, `Classify-SteamDll`, `Get-FileSha256`, `Get-GameFolderFromExe`. M3: `Find-GameSaveFolder`, `Get-SaveFolderStats`, `Test-SteamCloudMarker`, `Install-SaveIsolation`, `Restore-SaveIsolation`. M4: `Find-GameOverlaySlot`, `Format-SafeBaseOverlayIni`, `Install-VersionOverlay`, `Restore-VersionOverlay`. Constants: rule name/display/description, state dir, manifest path, backup dir, `SteamProxySource`, `SaveRelSegments`, `SteamCloudMarker`, `OverlaySourceDll`. |
+| `install.ps1` | **M1 + M2 + M3 + M4 + M5 landed** | Firewall rule + Steam proxy + save isolation + overlay banner slot + SDK deploy + verify + manifest. Self-elevates. Refuses if the game is running. Rolls back earlier steps if a later one fails. Flags: `-SavePath`, `-SkipSaves`, `-SkipOverlay`, `-AllowMissingSaves`. |
+| `uninstall.ps1` | **M1 + M2 + M3 + M4 + M5 landed** | Refuses if the game is running. Refuses if any content mod is still registered in `mods.json`. Restores the overlay slot FIRST (any prior version.dll comes back; a foreign DLL is parked, never deleted), then Saves/ (modded parked), then the real `steam_api64.dll`, then removes the firewall rule LAST, then removes the deployed SDK + manifest. |
+| `status.ps1` | **M1 + M2 + M3 + M4 + M5 landed** | Read-only: firewall rule + service + Steam-proxy class (proxy / real / absent / unknown) + save-isolation state (isolated / active / missing / n/a) + overlay slot state (present / SHA match / `[safebase] Enabled` / prior backup integrity) + SDK deploy state + content-mod registry (mods with per-file replace/add) + backup integrity + Steam Cloud rehydration warning + manifest. No admin. |
+| `uninstall-all.ps1` | **M5 landed** | Revert EVERY registered content mod (`Revert-Mod`: restore originals, park/remove added files, unregister), then run `uninstall.ps1`. Self-elevates once so mod reverts and the base teardown share one admin pass. Refuses if the game is running. |
+| `base.psm1` | **M5 landed** | The self-contained SDK content mods import from `%LOCALAPPDATA%\LeafItAloneSafe\base.psm1`. Exports `Assert-SafeBaseActive`, `Assert-SafePreconditions`, `Backup-Original`, `Register-Mod`, `Get-SafeBaseModRegistry`, `Restore-ModFiles`, `Unregister-Mod`, `Revert-Mod`, `Test-GameRunning`, `Get-SafeBasePaths`. Maintains the `mods.json` registry and the `mod-backups\<mod>\` store. Deployed by `install.ps1`; never depends on the repo at runtime. |
+| `common.ps1` | shared | Dot-sourced helpers. M1: `Find-GameExe`, `Test-IsAdmin`, `Get-FirewallState`. M2: `Find-GameSteamDll`, `Install-SteamProxy`, `Restore-SteamProxy`, `Classify-SteamDll`, `Get-FileSha256`, `Get-GameFolderFromExe`. M3: `Find-GameSaveFolder`, `Get-SaveFolderStats`, `Test-SteamCloudMarker`, `Install-SaveIsolation`, `Restore-SaveIsolation`. M4: `Find-GameOverlaySlot`, `Format-SafeBaseOverlayIni`, `Install-VersionOverlay`, `Restore-VersionOverlay`. M5: `Install-BaseSdk`, `Restore-BaseSdk`, `Get-ContentModRegistry`. Constants: rule name/display/description, state dir, manifest path, backup dir, `SteamProxySource`, `SaveRelSegments`, `SteamCloudMarker`, `OverlaySourceDll`, `SdkSource`, `SdkDeployedPath`, `ModsRegistryPath`, `ModBackupRoot`, `SafeBaseSaveMarker`. |
 | `steam_proxy/generate_proxy.ps1` | **M2 landed** | Regenerates `steam_proxy.cpp` + `steam_proxy.def` from `exports.txt`. Deterministic; only rerun if the game's SDK changes its export set. |
 | `steam_proxy/build_steam_proxy.ps1` | **M2 landed** | Compiles `steam_proxy.cpp` → `steam_api64.dll` (162 KB stub proxy). Ships prebuilt so end users don't need MSVC. |
 | `steam_proxy/exports.txt` | M2 source of truth | 1089 export names captured from the game's current `steam_api64.dll`. |
 | `../overlay/leaf_overlay.cpp` | **M4 landed (shared with overlay)** | The persistent-banner overlay + one-shot startup probe. Same DLL is the standalone HUD overlay and safe-base's in-game reporter; behaviour switches on `[safebase] Enabled=` in `LeafOverlay.ini`. Built by `../overlay/build_overlay.ps1`, prebuilt at `../overlay/version.dll`. |
-| `uninstall-all.ps1` | M5 | Revert every registered content mod, then uninstall. |
-| `base.psm1` | M5 | SDK content mods import. |
 
 ## Roadmap
 
@@ -351,7 +403,22 @@ Delivered one milestone at a time, each independently testable before the next.
      `LeafOverlay.ini` you did not have before install (any pre-existing
      pair was put back by STEP 1 of uninstall).
   9. `status.ps1` -> "not installed".
-- **M5** — `base.psm1` SDK + registry + `uninstall-all.ps1` + `recheck.ps1`.
+- **M5 - LANDED, SMOKE-TESTED** (2026-11-05) — the `base.psm1` SDK + the
+  `mods.json` content-mod registry + `uninstall-all.ps1`. `install.ps1` now
+  deploys the self-contained SDK to `%LOCALAPPDATA%\LeafItAloneSafe\base.psm1`
+  and records it in a `schemaVersion`-5 manifest (`sdk` block); `mods.json` is
+  kept separate so registering a mod never rewrites the safety manifest. The
+  SDK gives content mods `Assert-SafeBaseActive`, `Assert-SafePreconditions`
+  (re-verifies all four layers right now), `Backup-Original`, `Register-Mod`,
+  `Get-SafeBaseModRegistry`, `Restore-ModFiles`, `Unregister-Mod`, `Revert-Mod`,
+  `Test-GameRunning`. `uninstall.ps1`'s content-mod guard now reads the live
+  registry; `uninstall-all.ps1` reverts every mod then tears down the base in
+  one elevated pass. (`recheck.ps1` was dropped — M4's in-DLL startup probe
+  already does the re-verification, and `Assert-SafePreconditions` is the
+  out-of-game equivalent.) Verified with an isolated round-trip smoke test in a
+  temp sandbox (register → revert restores originals byte-for-byte, added files
+  are parked not deleted, revert is idempotent by SHA, unhealthy base makes
+  `Assert-SafePreconditions` throw). In-game apply test lands with M6.
 - **M6** — First content mod (`bag-capacity`) as the SDK's real test.
 
 ## Leak paths — what M1 + M2 + M3 + M4 block vs what's left
@@ -391,13 +458,15 @@ proves the state at every launch (M4). The remaining leaks are:
   reflects the state the check found. If a user changes the rule mid-session,
   the banner is stale until next launch. This is intentional: safe-base does
   not treat the user as an adversary.
-- The `base.psm1` SDK content mods use — ❌ **no**, M5.
+- The `base.psm1` SDK content mods use — ✅ **landed in M5**. It is deployed by
+  `install.ps1`, keeps its registry in a separate `mods.json`, and drives
+  `uninstall-all.ps1`. (This section lists only what is still genuinely absent.)
 
-Until M5 lands, no content mod is safe to distribute. But M1 + M2 + M3 + M4
-together mean the *safety story is real* for a user who manually applies a
-bundle edit in their own install for personal play. Use `../overlay/` in the
-meantime (cosmetic only, does not touch gameplay, and therefore does not need
-the safety framework).
+The framework is now complete enough that a content mod is safe to build and
+distribute — M6 (`bag-capacity`) is the first, and will be the SDK's real
+end-to-end test. Until M6 lands you can still use `../overlay/` on its own
+(cosmetic HUD, does not touch gameplay, so it needs none of the safety
+framework).
 
 ## Requirements (for M1 + M2 + M3 + M4)
 - Windows x64, *Leaf it Alone* on Steam (you must own the game).
