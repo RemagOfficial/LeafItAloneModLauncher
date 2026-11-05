@@ -86,10 +86,13 @@ $ini = Format-SafeBaseOverlayIni -ExpectedSteamProxySize $proxySize
 [System.IO.File]::WriteAllText($iniPath, $ini, [System.Text.Encoding]::ASCII)
 
 # 5. refresh the manifest so status.ps1 / uninstall.ps1 stay byte-accurate.
-$man.versionOverlay.sourceDllPath   = (Resolve-Path -LiteralPath $SourceDll).ProviderPath
-$man.versionOverlay.sourceDllSize   = $newSize
-$man.versionOverlay.sourceDllSha256 = $newSha
-$man.versionOverlay.redeployedAt    = (Get-Date).ToUniversalTime().ToString('o')
+#    Use Add-Member -Force: the object came from ConvertFrom-Json, so in Windows
+#    PowerShell 5.1 a plain assignment to a NEW property (redeployedAt) throws.
+$vo = $man.versionOverlay
+$vo | Add-Member -Force NoteProperty sourceDllPath   (Resolve-Path -LiteralPath $SourceDll).ProviderPath
+$vo | Add-Member -Force NoteProperty sourceDllSize   $newSize
+$vo | Add-Member -Force NoteProperty sourceDllSha256 $newSha
+$vo | Add-Member -Force NoteProperty redeployedAt    (Get-Date).ToUniversalTime().ToString('o')
 $man | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $ManifestPath -Encoding UTF8
 
 Write-Host ""
