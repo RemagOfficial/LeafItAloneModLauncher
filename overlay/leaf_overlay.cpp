@@ -16,12 +16,15 @@
 // Nothing here touches game memory or the encrypted metadata. It is purely additive.
 //
 // Since M4 the same DLL also acts as safe-base's on-screen reporter. When the
-// [safebase] section of LeafOverlay.ini has Enabled=true, the overlay draws a
-// persistent banner ("OFFLINE · MODDED PLAY · SCORES WILL NOT BE SUBMITTED")
-// that the F9 toggle can NOT hide, and runs a one-shot preflight check on
-// startup (Steam proxy file size, Saves/ isolation marker, live outbound
-// connect() probe). If any check fails the banner turns red. This still does
-// not police the game process.
+// [safebase] section of LeafOverlay.ini has Enabled=true, the overlay runs in
+// a MINIMAL banner-only mode: the HUD panel (title/clock/uptime/metrics) is
+// NOT drawn at all, F9 is ignored, and instead a persistent plain-text
+// banner ("OFFLINE · MODDED PLAY · SCORES WILL NOT BE SUBMITTED") is drawn
+// with a black outline so it stays readable over any scene without a boxed
+// backdrop. On startup the DLL runs a one-shot preflight check (Steam proxy
+// file size, Saves/ isolation marker, live outbound connect() probe). If any
+// check fails the text turns red. This still does not police the game
+// process mid-session.
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -528,34 +531,39 @@ static void PaintOverlay(HWND h) {
 
     SetBkMode(dc, TRANSPARENT);
 
-    // ---- safe-base banner (persistent, non-hideable when safebase is enabled) ----
+    // ---- safe-base banner (persistent, plain text, non-hideable) ----
+    // Minimal mode: no rounded rect, no border. Text only, with a 1px black
+    // outline so it stays readable over bright or busy scenes without adding
+    // a distracting backdrop.
     if (g_safebase && g_sbBanner) {
         SelectObject(dc, g_fontSmall);
         const wchar_t* txt = g_sbOk ? g_sbBannerText : g_sbFailSummary[0] ? g_sbFailSummary : g_sbBannerText;
         SIZE bs{}; GetTextExtentPoint32W(dc, txt, (int)wcslen(txt), &bs);
-        int bpw = bs.cx + 34, bph = bs.cy + 20;
         int bpx, bpy;
         switch (g_sbBannerCorner) {
-            case 1: bpx = g_sbBannerMargin;                              bpy = g_sbBannerMargin; break;
-            case 2: bpx = cw - bpw - g_sbBannerMargin;                   bpy = g_sbBannerMargin; break;
-            case 3: bpx = (cw - bpw) / 2;                                bpy = ch - bph - g_sbBannerMargin; break;
-            default: bpx = (cw - bpw) / 2;                               bpy = g_sbBannerMargin; break;
+            case 1: bpx = g_sbBannerMargin;                bpy = g_sbBannerMargin; break;
+            case 2: bpx = cw - bs.cx - g_sbBannerMargin;   bpy = g_sbBannerMargin; break;
+            case 3: bpx = (cw - bs.cx) / 2;                bpy = ch - bs.cy - g_sbBannerMargin; break;
+            default: bpx = (cw - bs.cx) / 2;               bpy = g_sbBannerMargin; break;
         }
         if (bpx < 0) bpx = 0; if (bpy < 0) bpy = 0;
-        RECT bp = { bpx, bpy, bpx + bpw, bpy + bph };
-        COLORREF bodyC = g_sbOk ? RGB(20, 78, 34) : RGB(112, 22, 22);
-        COLORREF edgeC = g_sbOk ? RGB(120, 200, 130) : RGB(230, 90, 90);
-        COLORREF textC = RGB(240, 246, 240);
-        HBRUSH bb = CreateSolidBrush(bodyC);
-        HPEN   be = CreatePen(PS_SOLID, 2, edgeC);
-        HBRUSH ob = (HBRUSH)SelectObject(dc, bb);
-        HPEN   op = (HPEN)SelectObject(dc, be);
-        RoundRect(dc, bp.left, bp.top, bp.right, bp.bottom, 18, 18);
-        SelectObject(dc, ob); SelectObject(dc, op);
-        DeleteObject(bb); DeleteObject(be);
+        COLORREF textC = g_sbOk ? RGB(196, 226, 200) : RGB(255, 110, 110);
+        // Black outline: draw the string once at each of the 8 neighbours.
+        SetTextColor(dc, RGB(0, 0, 0));
+        for (int ox = -1; ox <= 1; ++ox) {
+            for (int oy = -1; oy <= 1; ++oy) {
+                if (ox == 0 && oy == 0) continue;
+                RECT o = { bpx + ox, bpy + oy, bpx + bs.cx + ox, bpy + bs.cy + oy };
+                DrawTextW(dc, txt, -1, &o, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+            }
+        }
+        RECT bp = { bpx, bpy, bpx + bs.cx, bpy + bs.cy };
         SetTextColor(dc, textC);
-        DrawTextW(dc, txt, -1, &bp, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        DrawTextW(dc, txt, -1, &bp, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
     }
+
+    // safe-base mode is banner-only: no HUD panel, F9 does nothing.
+    if (g_safebase) { EndPaint(h, &ps); return; }
 
     if (!g_visible) { EndPaint(h, &ps); return; }
 
@@ -681,15 +689,19 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_TIMER:
         FollowGameWindow();
-        UpdateMetrics();
+        if (!g_safebase) UpdateMetrics();   // banner-only mode never shows metrics
         {
-            bool down = (GetAsyncKeyState(g_toggleVk) & 0x8000) != 0;
-            if (down && !g_prevToggle) {
-                g_visible = !g_visible;
-                OLog("toggle -> %s", g_visible ? "visible" : "hidden");
-                ShowWindow(g_hwnd, g_visible ? SW_SHOWNA : SW_HIDE);
+            // F9 toggles the HUD panel only. safe-base mode is banner-only and
+            // the banner must never be hideable, so the toggle is a no-op there.
+            if (!g_safebase) {
+                bool down = (GetAsyncKeyState(g_toggleVk) & 0x8000) != 0;
+                if (down && !g_prevToggle) {
+                    g_visible = !g_visible;
+                    OLog("toggle -> %s", g_visible ? "visible" : "hidden");
+                    ShowWindow(g_hwnd, g_visible ? SW_SHOWNA : SW_HIDE);
+                }
+                g_prevToggle = down;
             }
-            g_prevToggle = down;
         }
         InvalidateRect(h, nullptr, FALSE);   // repaint so the clock stays live
         return 0;
@@ -752,12 +764,14 @@ static DWORD WINAPI OverlayThread(LPVOID) {
         nullptr, nullptr, hi, nullptr);
     if (!g_hwnd) { OLog("CreateWindowEx failed gle=%lu", GetLastError()); return 0; }
 
-    // color key -> everything but the panel becomes transparent; LWA_ALPHA makes
-    // the panel itself slightly translucent.
-    SetLayeredWindowAttributes(g_hwnd, kColorKey, (BYTE)g_alpha, LWA_COLORKEY | LWA_ALPHA);
+    // color key -> everything but the drawn pixels become transparent.
+    // LWA_ALPHA makes the HUD panel slightly translucent; safe-base's plain
+    // text banner uses full opacity so it stays crisp.
+    BYTE winAlpha = g_safebase ? (BYTE)255 : (BYTE)g_alpha;
+    SetLayeredWindowAttributes(g_hwnd, kColorKey, winAlpha, LWA_COLORKEY | LWA_ALPHA);
     InitMetrics();
     SetTimer(g_hwnd, 1, 50, nullptr);
-    ShowWindow(g_hwnd, g_visible ? SW_SHOWNA : SW_HIDE);
+    ShowWindow(g_hwnd, g_safebase ? SW_SHOWNA : (g_visible ? SW_SHOWNA : SW_HIDE));
     OLog("overlay window created, entering message loop");
 
     MSG m;

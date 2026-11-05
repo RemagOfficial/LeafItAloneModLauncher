@@ -110,10 +110,15 @@ relaunch — **no recompiling**. Every key is optional (defaults shown):
 ### `[safebase]` section (M4)
 
 The same DLL doubles as safe-base's in-game reporter. When
-`[safebase] Enabled=true`, it draws a **persistent banner across the top
-of the screen** (F9 does NOT hide it) that reads
-`OFFLINE · MODDED PLAY · SCORES WILL NOT BE SUBMITTED`, and runs a
-**one-shot preflight** at game startup from inside the game process:
+`[safebase] Enabled=true`, the overlay switches to a **minimal banner-only
+mode**: the HUD panel (title / clock / uptime / metrics) is **not drawn at
+all** and the show/hide hotkey is ignored. Instead a **persistent plain-text
+line** is drawn at the top-centre of the screen — no box, no backdrop, just
+text with a thin black outline so it stays readable over any scene —
+reading `OFFLINE · MODDED PLAY · SCORES WILL NOT BE SUBMITTED`. It is never
+hideable, so you can always see at a glance that the safety layers are
+active, without it distracting during play. Alongside the banner, the DLL
+runs a **one-shot preflight** at game startup from inside the game process:
 
 - file-size check on the Steam proxy at `<game folder>\Leaf it Alone_Data\Plugins\x86_64\steam_api64.dll`,
 - existence check on the Saves/ isolation marker at
@@ -123,15 +128,16 @@ of the screen** (F9 does NOT hide it) that reads
   the rule keys off the *game's* PID (PowerShell scripts testing connectivity
   would test their own process, not the game's).
 
-If any check fails, the banner turns **red** and shows a compact reason; full
-details go to `LeafOverlay.log`. Safe-base does not police the game after
-this — if you turn the firewall rule off mid-session the banner stays as it
-was drawn at startup, because we deliberately do not add a trip-wire.
+If any check fails, the banner text turns **red** and shows a compact
+reason; full details go to `LeafOverlay.log`. Safe-base does not police the
+game after this — if you turn the firewall rule off mid-session the banner
+stays as it was drawn at startup, because we deliberately do not add a
+trip-wire.
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `Enabled` | `false` | Turn the whole M4 layer on. Off by default so standalone HUD users see no change. |
-| `Banner` | `true` | Draw the banner. When false, the preflight still runs (and logs) but nothing is drawn. |
+| `Enabled` | `false` | Turn the whole M4 layer on. Off by default so standalone HUD users see no change. **On, the HUD panel is suppressed entirely** (banner-only mode). |
+| `Banner` | `true` | Draw the banner. When false, the preflight still runs (and logs) but nothing is drawn — the screen is completely clean. |
 | `BannerCorner` | `TopCenter` | `TopCenter`, `TopLeft`, `TopRight`, `BottomCenter`. |
 | `BannerMargin` | `14` | Pixels from the anchor edge. |
 | `BannerText` | (empty) | Optional override of the banner string. Empty uses the built-in default. INI encoding is ANSI; non-ASCII needs the file saved as UTF-16 LE. |

@@ -1,9 +1,11 @@
 # `safe-base/` — Offline-safety framework
 
-**Status: M1 + M2 + M3 + M4 landed. M1, M2 and M3 are in-game tested
-(2026-11-05). M4 adds the persistent OFFLINE banner and a one-shot in-game
-startup probe (the outbound `connect(1.1.1.1:443)` test only makes sense
-from inside the game's own process). Together the four layers close every
+**Status: M1 + M2 + M3 + M4 landed and in-game tested (2026-11-05). M4 adds
+the persistent OFFLINE banner and a one-shot in-game startup probe (the
+outbound `connect(1.1.1.1:443)` test only makes sense from inside the
+game's own process). In safe-base mode the overlay is **minimal**: no HUD
+panel at all, just the banner as plain outlined text so it doesn't distract
+during play. Together the four layers close every
 upload path the game process can initiate AND keep modded progression off
 your real save AND show you at a glance that the safety is active. M5-M6
 (PS SDK, first content mod) are still planned; roadmap at the bottom.**
@@ -18,8 +20,10 @@ Install this **before** any mod in `../content-mods/`.
 # 3. Moves the game's Saves/ folder to a timestamped backup and creates an
 #    empty placeholder so modded play writes to a throwaway save.
 # 4. Drops the OFFLINE-banner version.dll overlay (any existing version.dll
-#    is backed up, not deleted) with [safebase] Enabled=true so it probes
-#    the three preconditions from inside the game process at startup.
+#    is backed up, not deleted) with [safebase] Enabled=true. In this mode
+#    the overlay is minimal — no HUD panel, just a plain-text persistent
+#    banner — and it probes the three preconditions from inside the game
+#    process at startup.
 # Self-elevates via UAC; asks for confirmation ("YES") first. Refuses if the
 # game is currently running.
 .\safe-base\install.ps1
@@ -117,16 +121,19 @@ On install, `install.ps1` (self-elevating):
    and a fresh `LeafOverlay.ini` is written with `[safebase] Enabled=true`
    and `ExpectedSteamProxySize=<size M2 just installed>`.
    On first game launch, `version.dll` (running inside `Leaf it Alone.exe`)
-   draws a **persistent top-centre banner**
-   `OFFLINE · MODDED PLAY · SCORES WILL NOT BE SUBMITTED` that F9 does NOT
-   hide, and runs a **one-shot** preflight:
+   switches to **minimal banner-only mode**: the HUD panel is not drawn at
+   all, F9 is ignored, and a **persistent plain-text line**
+   `OFFLINE · MODDED PLAY · SCORES WILL NOT BE SUBMITTED` appears at
+   top-centre — text with a thin black outline, no box or backdrop, so it
+   stays readable without distracting during play. The banner can never be
+   hidden. Alongside it, a **one-shot** preflight runs:
    (a) the on-disk `steam_api64.dll` matches the expected proxy size,
    (b) the `.safebase-empty` marker exists at the isolated Saves/ path,
    (c) a non-blocking `connect(1.1.1.1:443)` **times out** (which proves the
        program-scoped firewall rule is enforcing for THIS process).
-   If all three pass the banner is green; any failure turns it red with a
-   compact reason on the strip. We deliberately do **not** terminate the
-   process, show a MessageBox, or hide the HUD on failure — a persistent
+   If all three pass the text is pale green; any failure turns it red with a
+   compact reason. We deliberately do **not** terminate the
+   process, show a MessageBox, or add a mid-session trip-wire — a persistent
    visible warning plus a red state is enough. If a user manually removes
    the firewall rule mid-session, that's their call; we don't re-probe
    periodically.
@@ -285,24 +292,30 @@ Delivered one milestone at a time, each independently testable before the next.
      game one more time - your vanilla progression should be exactly what
      you had before all of this.
   9. `status.ps1` -> "not installed".
-- **M4 - LANDED** (in-game test pending) — Persistent OFFLINE banner and a
-  one-shot in-game startup probe, both merged into the same `version.dll`
-  the overlay example ships (`../overlay/version.dll`; a `[safebase]` INI
-  section controls behaviour). On install, safe-base backs up any existing
+- **M4 - LANDED** (banner in-game tested 2026-11-05; the minimal
+  plain-text revision below needs a quick re-test) — Persistent OFFLINE
+  banner and a one-shot in-game startup probe, both merged into the same
+  `version.dll` the overlay example ships (`../overlay/version.dll`; a
+  `[safebase]` INI section controls behaviour). When `[safebase]
+  Enabled=true` the overlay runs in **minimal banner-only mode**: the HUD
+  panel (title/clock/uptime/metrics) is NOT drawn at all, F9 is ignored,
+  and the banner is **plain text with a thin black outline** (no box, no
+  backdrop) so it stays readable without distracting during play. On
+  install, safe-base backs up any existing
   `version.dll` and `LeafOverlay.ini` in the game folder to
   `%LOCALAPPDATA%\LeafItAloneSafe\overlay\`, drops the current build of
   `version.dll` and writes a fresh `LeafOverlay.ini` with
   `[safebase] Enabled=true` and `ExpectedSteamProxySize=<size M2 just
   installed>`. On first launch the DLL, running inside `Leaf it Alone.exe`,
-  draws a persistent top-centre banner ("OFFLINE · MODDED PLAY · SCORES
-  WILL NOT BE SUBMITTED") that F9 does NOT hide, and verifies:
+  draws the persistent top-centre text ("OFFLINE · MODDED PLAY · SCORES
+  WILL NOT BE SUBMITTED") — which can never be hidden — and verifies:
   (a) `steam_api64.dll` in the game's Plugins folder matches that size,
   (b) `.safebase-empty` exists at the Saves/ path,
   (c) a live non-blocking `connect(1.1.1.1:443)` with a 1.5 s timeout does
   **not** complete (which is the only meaningful way to prove the
   program-scoped firewall rule for THIS process is enforcing — PowerShell
   cannot test this because a program-scoped rule only affects its own
-  process). If all three pass the banner stays green; any failure turns it
+  process). If all three pass the text is pale green; any failure turns it
   red and shows a compact reason. We deliberately do **not** add a
   trip-wire: if a user manually removes the rule mid-session, that is their
   choice. `uninstall.ps1` restores `version.dll` and `LeafOverlay.ini`
@@ -319,15 +332,16 @@ Delivered one milestone at a time, each independently testable before the next.
   3. `status.ps1` -> `[M4] Overlay banner layer (version.dll): PRESENT,
      matches installed SHA`, `LeafOverlay.ini: PRESENT with [safebase]
      Enabled=true`, verdict `M1 + M2 + M3 + M4 active`.
-  4. Launch the game. Within a couple of seconds a **green**
-     `OFFLINE · MODDED PLAY · SCORES WILL NOT BE SUBMITTED` strip should
-     appear at top-centre of the screen, above (or alongside) the existing
-     HUD panel in the top-left.
-  5. Press F9. The HUD panel toggles, but the OFFLINE banner STAYS.
+  4. Launch the game. Within a couple of seconds a **pale-green plain-text**
+     line `OFFLINE · MODDED PLAY · SCORES WILL NOT BE SUBMITTED` should
+     appear at top-centre of the screen. There should be NO HUD panel
+     anywhere — safe-base mode is banner-only.
+  5. Press F9. Nothing happens (the toggle only exists in standalone
+     overlay mode; in safe-base mode the banner can never be hidden).
   6. Optional negative test: while the game is running, open `wf.msc`,
      find `Leaf it Alone Safe (block outbound - modding)` and set Enabled
-     = false. Restart the game. The banner should turn **red** and show
-     `outbound NOT blocked` on the strip. This is expected — the check only
+     = false. Restart the game. The banner text should turn **red** and
+     show `outbound NOT blocked`. This is expected — the check only
      runs at startup, so you need a fresh launch. Do NOT continue playing
      like this. Restore the rule and re-enable safe-base before playing.
   7. `uninstall.ps1` -> refuses if game running; else restores version.dll +

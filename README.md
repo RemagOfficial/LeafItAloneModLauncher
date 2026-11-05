@@ -22,8 +22,8 @@ protected Unity IL2CPP build. Fully shipped, documented and videoed.
 ### `safe-base/`
 The **offline-safety framework**. Installs once, keeps modded play from ever
 touching the game's leaderboards or your real save file. **Status: M1 + M2 +
-M3 landed and in-game tested (2026-11-05); M4 landed and pending in-game
-test.** The firewall block, the Steamworks stub proxy AND save isolation are
+M3 + M4 landed and in-game tested (2026-11-05).** The firewall block, the
+Steamworks stub proxy AND save isolation are
 implemented, reversible and verified. The game launches normally, the
 leaderboard renders empty and a modded play-session writes to a throwaway
 `Saves/` that never touches your real one. M4 layers a persistent
@@ -46,15 +46,17 @@ closed, one leak class mitigated, one visible-verifier added:
   deleted). Refuses to run if the game is currently active. If Steam Cloud
   is enabled on the game, install prints a warning with the click-path to
   disable it manually (safe-base never edits Steam's own config).
-- **[M4 ✅ (in-game test pending)]** A persistent
-  `OFFLINE · MODDED PLAY · SCORES WILL NOT BE SUBMITTED` banner drawn from
-  inside the game's own process (the same `version.dll` that ships the
-  cosmetic HUD), with a **one-shot** startup check: file-size match on the
-  Steam proxy, presence of the `Saves/` isolation marker, and a live
-  `connect(1.1.1.1:443)` outbound probe that only the game process can
-  perform meaningfully. Failing any check turns the banner red; safe-base
-  does not police manual tampering mid-play. `install.ps1` backs up any
-  pre-existing `version.dll` (e.g. a standalone overlay install) before
+- **[M4 ✅]** A persistent `OFFLINE · MODDED PLAY · SCORES WILL NOT BE
+  SUBMITTED` banner drawn from inside the game's own process (the same
+  `version.dll` that ships the cosmetic HUD), with a **one-shot** startup
+  check: file-size match on the Steam proxy, presence of the `Saves/`
+  isolation marker, and a live `connect(1.1.1.1:443)` outbound probe that
+  only the game process can perform meaningfully. Failing any check turns
+  the banner red; safe-base does not police manual tampering mid-play.
+  In safe-base mode the overlay is **minimal banner-only**: the HUD panel
+  is not drawn at all and the banner is plain outlined text (no box) so it
+  stays readable without distracting during play. `install.ps1` backs up
+  any pre-existing `version.dll` (e.g. a standalone overlay install) before
   dropping ours; `uninstall.ps1` restores the overlay slot FIRST so your
   prior setup comes back before anything else changes.
 - **[M5]** A PowerShell SDK (`base.psm1`) with `Assert-SafeBaseActive`,

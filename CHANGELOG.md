@@ -122,6 +122,17 @@ release notes inside its README.
   `overlay/version.dll` rebuilt: 188 416 bytes, SHA-256
   `992FD87186DB93EA8F15B933B030C305538CD3705AA7DA884BC1BDB59AF1D68D`
   (prior overlay commit was 179 200 bytes).
+- **`safe-base/` M4 tested (2026-11-05) + minimal revision**. In-game test
+  passed: green banner at top-centre, preflight correct, uninstall restored
+  the slot first. Per user feedback the safe-base mode was then made
+  **minimal**: when `[safebase] Enabled=true` the HUD panel (title/clock/
+  uptime/metrics) is NOT drawn at all, F9 is a no-op, and the banner is
+  **plain pale-green/red outlined text** (no rounded box, no backdrop) so
+  it doesn't distract during play. Window alpha is forced to 255 in
+  safe-base mode so the text stays crisp. Standalone overlay mode (safebase
+  disabled) is unchanged. `overlay/version.dll` rebuilt at the same size
+  (188 416 bytes), new SHA-256
+  `D3D735154DE13FF709C0158969C89CB1225A801E09D76F4A6303102EEFC708C1`.
 - First content mod planned: `content-mods/bag-capacity/` (M6).
 
 ## 1.0.0
