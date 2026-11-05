@@ -287,6 +287,10 @@ release notes inside its README.
   `-Yes`/`-Python` arg contract, and a **real subprocess round trip against fake scripts
   in a temp dir** (never the game): launch, streamed output, exit 0 vs exit 7, and a
   revert that proves no undeclared `-Python` is passed.
+  - output log now **auto-scrolls** to the newest line (user feedback: it didn't follow
+    streaming output). `Views/LogAutoScroll.cs` is a declarative attached behaviour on
+    the log `ListBox`; it follows only when you're already near the bottom, so scrolling
+    up to read history isn't yanked back down. Kept out of code-behind.
 
 ## 1.0.0
 Initial release: the `overlay/` example.

@@ -1,6 +1,7 @@
 <Window x:Class="LeafItAlone.Launcher.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:v="clr-namespace:LeafItAlone.Launcher.Views"
         Title="Leaf it Alone Mod Launcher" Height="640" Width="960"
         WindowStartupLocation="CenterScreen">
     <Window.Resources>
@@ -20,6 +21,7 @@
             <ListBox Height="150" FontFamily="Consolas" FontSize="12"
                      Background="{StaticResource LogBrush}" Foreground="#D4D4D4"
                      ItemsSource="{Binding LogLines}"
+                     v:LogAutoScroll.Enabled="True"
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled" />
         </Expander>
 
