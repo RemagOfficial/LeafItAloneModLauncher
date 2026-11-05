@@ -113,7 +113,11 @@ public sealed class ConfigFieldEditor : ObservableObject
         {
             case FieldTypes.Int:
             case FieldTypes.Float:
-                _num = ReadNumber(node);
+                // Clamp on load too: a pre-existing live value outside the manifest
+                // range (e.g. an old >4-digit size) would otherwise render the slider
+                // past its stops; it snaps into range and any save brings it legal.
+                _num = Clamp(ReadNumber(node));
+                if (IsInt) _num = Math.Round(_num, MidpointRounding.AwayFromZero);
                 OnPropertyChanged(nameof(Num));
                 OnPropertyChanged(nameof(ValueText));
                 break;
