@@ -266,6 +266,9 @@ release notes inside its README.
   shows a live pending badge. Mods is the interim default tab (L5 restores the
   Dashboard landing). All 32 headless checks pass (L1 discovery + L2 round-trip,
   `when` re-gating, pending badge, `ConvertFrom-Json` acceptance).
+  - bag-capacity field ranges tightened (user feedback): size sliders capped
+    **0..9999** and multiplier **max 10x** — values above 4 digits overrun the
+    in-game bag UI element, so the launcher now clamps them out of range.
 
 ## 1.0.0
 Initial release: the `overlay/` example.
