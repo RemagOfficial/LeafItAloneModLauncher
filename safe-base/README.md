@@ -12,8 +12,8 @@ upload path the game process can initiate AND keep modded progression off
 your real save AND show you at a glance that the safety is active. M5 makes
 that safety reusable: content mods import `base.psm1`, re-verify the stack,
 back up every file they touch, and register it so `uninstall-all.ps1` can
-reverse all of it. M6 (the first content mod, `bag-capacity`) is still
-planned; roadmap at the bottom.**
+reverse all of it. M6 has now landed the first content mod, `bag-capacity`, in
+[`../content-mods/`](../content-mods/bag-capacity/README.md); roadmap at the bottom.**
 
 Install this **before** any mod in `../content-mods/`.
 
@@ -418,8 +418,16 @@ Delivered one milestone at a time, each independently testable before the next.
   out-of-game equivalent.) Verified with an isolated round-trip smoke test in a
   temp sandbox (register → revert restores originals byte-for-byte, added files
   are parked not deleted, revert is idempotent by SHA, unhealthy base makes
-  `Assert-SafePreconditions` throw). In-game apply test lands with M6.
-- **M6** — First content mod (`bag-capacity`) as the SDK's real test.
+  `Assert-SafePreconditions` throw).
+- **M6** — ✅ **LANDED.** First content mod
+  [`bag-capacity`](../content-mods/bag-capacity/README.md), the SDK's real
+  end-to-end test: doubles the four leaf-bag capacities (50/200/500/800 →
+  100/400/1000/1600) via a UnityPy patch (`patch_bag_capacity.py`) driven
+  through `apply.ps1` / `revert.ps1`. The mod asserts the whole stack is healthy
+  before touching a byte, stages + self-verifies the patch, `Backup-Original`s
+  the pristine bundle, and registers it so `uninstall-all.ps1` can reverse it.
+  Verified by an isolated round-trip smoke test (2x applied + live-verified,
+  non-vanilla input rejected, byte-identical revert). Needs Python 3.12 + UnityPy.
 
 ## Leak paths — what M1 + M2 + M3 + M4 block vs what's left
 
@@ -462,11 +470,11 @@ proves the state at every launch (M4). The remaining leaks are:
   `install.ps1`, keeps its registry in a separate `mods.json`, and drives
   `uninstall-all.ps1`. (This section lists only what is still genuinely absent.)
 
-The framework is now complete enough that a content mod is safe to build and
-distribute — M6 (`bag-capacity`) is the first, and will be the SDK's real
-end-to-end test. Until M6 lands you can still use `../overlay/` on its own
-(cosmetic HUD, does not touch gameplay, so it needs none of the safety
-framework).
+The framework is now complete, and the first content mod has landed to prove it
+end-to-end — [`../content-mods/bag-capacity`](../content-mods/bag-capacity/README.md)
+(M6) runs on the SDK and doubles the bag sizes. You can also still use
+`../overlay/` on its own (cosmetic HUD, does not touch gameplay, so it needs
+none of the safety framework).
 
 ## Requirements (for M1 + M2 + M3 + M4)
 - Windows x64, *Leaf it Alone* on Steam (you must own the game).
@@ -480,4 +488,5 @@ framework).
   `FullScreenWindow` displayMode). Exclusive fullscreen will not composite
   the topmost overlay window. The vanilla game ships borderless, so this
   is normally already satisfied.
-- Later milestones add: Python 3.12 + UnityPy for content mods (M6).
+- The `../content-mods/bag-capacity` mod (M6) additionally needs **Python 3.12
+  + UnityPy** (`pip install UnityPy`); see its README.

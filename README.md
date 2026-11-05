@@ -23,7 +23,8 @@ protected Unity IL2CPP build. Fully shipped, documented and videoed.
 The **offline-safety framework**. Installs once, keeps modded play from ever
 touching the game's leaderboards or your real save file. **Status: M1 + M2 +
 M3 + M4 landed and in-game tested, M5 (the `base.psm1` SDK + content-mod
-registry + `uninstall-all.ps1`) landed and smoke-tested (2026-11-05).** The firewall block, the
+registry + `uninstall-all.ps1`) landed and smoke-tested, M6 (the first content
+mod, `bag-capacity`) landed and smoke-tested (2026-11-05).** The firewall block, the
 Steamworks stub proxy AND save isolation are
 implemented, reversible and verified. The game launches normally, the
 leaderboard renders empty and a modded play-session writes to a throwaway
@@ -70,11 +71,19 @@ closed, one leak class mitigated, one visible-verifier added:
   every file it touches is backed up and reversible. `uninstall.ps1` refuses
   while any mod is registered; `uninstall-all.ps1` reverts them all then tears
   down the base.
+- **[M6 ✅]** The first content mod, [`content-mods/bag-capacity`](content-mods/bag-capacity/README.md):
+  a UnityPy patch (`patch_bag_capacity.py`) that doubles the four leaf-bag
+  capacities (50/200/500/800 → 100/400/1000/1600) in the plain `coreassets_assets_meta_*.bundle`,
+  driven through `apply.ps1` / `revert.ps1` on the SDK. It refuses to run unless
+  safe-base is installed *and* healthy and the bundle holds the exact vanilla
+  values, backs up the pristine file before overwriting, re-reads the live
+  bundle to verify, and auto-restores on any failure — the SDK's real
+  end-to-end test.
 
 Install `safe-base` once. Content mods depend on it. **If you plan to change
-in-game numbers, install the base first** — M5 is landed, so the SDK content
-mods build on is in place; the first real content mod (`bag-capacity`, M6) is
-the SDK's end-to-end test. See the roadmap in
+in-game numbers, install the base first** — the SDK and the first real content
+mod (`bag-capacity`, M6) have both landed. With safe-base installed, try it:
+`content-mods/bag-capacity/apply.ps1`. See the roadmap in
 [`safe-base/README.md`](safe-base/README.md).
 
 ### `content-mods/`
@@ -85,9 +94,10 @@ MelonLoader); content in the `.bundle` files is plain UnityFS with intact
 TypeTrees, so we can read and rewrite MonoBehaviour / ScriptableObject fields
 directly with [UnityPy](https://github.com/Logardas/UnityPy).
 
-First planned mod: **bag-capacity** — increase leaf-bag size (the four
-`Small/Medium/Big/Giant BagCapacity` ScriptableObjects in
-`coreassets_assets_meta_*.bundle`, currently 50 / 200 / 500 / 800).
+First shipped mod: **[`bag-capacity`](content-mods/bag-capacity/README.md)** ✅ —
+doubles leaf-bag size (the four `Small/Medium/Big/Giant BagCapacity`
+MonoBehaviours in `coreassets_assets_meta_*.bundle`, 50 / 200 / 500 / 800 →
+100 / 400 / 1000 / 1600).
 
 Every content mod follows the same pattern:
 ```
@@ -103,10 +113,10 @@ content-mods/<name>/
 | I want to… | Do this |
 |---|---|
 | Just see how the DLL-hijack overlay works | Follow [`overlay/README.md`](overlay/README.md) |
-| Try the M1 + M2 + M3 + M4 + M5 safety framework now (no content mods yet) | Close the game. `safe-base/install.ps1` → play (green banner appears at top-centre) → `safe-base/uninstall.ps1`. Status any time: `safe-base/status.ps1` |
+| Try the M1 + M2 + M3 + M4 + M5 safety framework now | Close the game. `safe-base/install.ps1` → play (green banner appears at top-centre) → `safe-base/uninstall.ps1`. Status any time: `safe-base/status.ps1` |
 | Back out of everything (mods + base) in one go | `safe-base/uninstall-all.ps1` — reverts every registered content mod, then uninstalls the base |
-| Play the game with mods without polluting the leaderboard (M1-M5 all landed) | Install `safe-base/` once |
-| Actually change gameplay content (bigger bag, more leaves, faster seal) | The SDK is ready (M5 landed); the first mod (`bag-capacity`, M6) is pending. Then: install `safe-base/`, then `apply.ps1` from a mod in [`content-mods/`](content-mods/README.md) |
+| Play the game with mods without polluting the leaderboard (M1-M6 all landed) | Install `safe-base/` once |
+| Actually change gameplay content (bigger bag, more leaves, faster seal) | Install `safe-base/`, then `content-mods/bag-capacity/apply.ps1` (needs Python 3.12 + UnityPy). More mods in [`content-mods/`](content-mods/README.md) |
 | Undo everything and go back to vanilla | `safe-base/uninstall-all.ps1` — reverts every registered content mod, restores your original save, removes the firewall rule LAST. With no mods applied it's equivalent to `safe-base/uninstall.ps1`. |
 
 ## Why the split exists

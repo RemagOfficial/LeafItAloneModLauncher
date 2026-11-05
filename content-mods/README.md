@@ -4,8 +4,9 @@ Small, focused mods that change what's *in the game* — bag sizes, leaf counts,
 seal times, textures, new achievements, whatever the bundle data can express.
 Each mod lives in its own folder and depends on [`../safe-base/`](../safe-base/README.md).
 
-**Status: none shipped yet.** The framework's M6 milestone will land the first
-one (`bag-capacity/`). Until then this folder is documentation.
+**Status: the first one has shipped.** [`bag-capacity/`](bag-capacity/README.md)
+(M6) doubles the four leaf-bag capacities and is the SDK's real end-to-end
+test. The rest of this folder's table is still planned.
 
 ## Why we can content-mod at all
 
@@ -55,30 +56,33 @@ content-mods/<modname>/
 └── LICENSE.md        MIT
 ```
 
-`apply.ps1` looks like:
+`apply.ps1` looks like (this is exactly what
+[`bag-capacity/apply.ps1`](bag-capacity/apply.ps1) does):
 
 ```powershell
-$base = Join-Path $env:LOCALAPPDATA "LeafItAloneSafe\base.psm1"
-if (-not (Test-Path $base)) {
-    Write-Error "You must install safe-base first: <link to safe-base README>"
-    exit 1
-}
-Import-Module $base
-Assert-SafeBaseActive
-Assert-SafePreconditions
+$sdk = Join-Path $env:LOCALAPPDATA "LeafItAloneSafe\base.psm1"
+if (-not (Test-Path $sdk)) { Write-Error "Install safe-base first: ../safe-base/"; exit 2 }
+Import-Module $sdk -DisableNameChecking     # the SDK's verbs are non-approved; ignore it
+
+if (Test-GameRunning) { Write-Error "Close the game first"; exit 3 }
+Assert-SafeBaseActive                        # base must be installed
+Assert-SafePreconditions                     # firewall + proxy + save + banner healthy NOW
 
 $target = "<resolved path to the game's bundle>"
-Backup-Original $target -ForMod "bag-capacity"
-& python patch.py --target $target --capacity-small 200 --capacity-medium 800 ...
-Register-Mod -Name "bag-capacity" -Files @($target)
+# 1. stage + self-verify the patched copy BEFORE touching the game folder
+& C:\Python312\python.exe patch.py --in $target --out-dir $staging --scale 2
+# 2. snapshot the pristine original through the SDK, then overwrite + re-verify
+$rec = Backup-Original -ModName "bag-capacity" -TargetPath $target
+Copy-Item $stagedBundle $target -Force
+Register-Mod -Name "bag-capacity" -Version "1.0.0" -Files @($rec)
 ```
 
-`revert.ps1` is symmetric:
+`revert.ps1` is symmetric — the SDK does the restore (park-aside, never delete)
+and unregistration in one call:
 
 ```powershell
-Import-Module (Join-Path $env:LOCALAPPDATA "LeafItAloneSafe\base.psm1")
-Restore-Original -ForMod "bag-capacity"
-Unregister-Mod -Name "bag-capacity"
+Import-Module (Join-Path $env:LOCALAPPDATA "LeafItAloneSafe\base.psm1") -DisableNameChecking
+Revert-Mod -Name "bag-capacity"     # restores byte-identical original + unregisters
 ```
 
 ## Rules a content mod must follow
@@ -102,7 +106,7 @@ Unregister-Mod -Name "bag-capacity"
 
 | Mod | What it changes | Bundle(s) | Field(s) |
 |---|---|---|---|
-| `bag-capacity/` (M6, first) | Bigger leaf bags | `coreassets_assets_meta_*` | `capacity` on 4 MonoBehaviours (Small=50, Med=200, Big=500, Giant=800) |
+| `bag-capacity/` ✅ **(shipped, M6)** | Bigger leaf bags (x2 by default) | `coreassets_assets_meta_*` | `capacity` on 4 MonoBehaviours (Small=50, Med=200, Big=500, Giant=800) |
 | `bag-speed/` | Faster seal & empty | `coreassets_assets_actors_*` | `sealingTime`, `emptyingDuration` on each `*LeafBag` |
 | `more-leaves/` | Denser levels | `coreassets_assets_areas*` | `leavesCount` per area |
 | `instant-seal/` | QoL: no seal delay | same as `bag-speed/` | set `sealingTime = 0.0` |

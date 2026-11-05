@@ -165,7 +165,25 @@ release notes inside its README.
   register → revert restores originals byte-for-byte, added files are parked
   not deleted, revert idempotent, unhealthy base makes
   `Assert-SafePreconditions` throw).
-- First content mod planned: `content-mods/bag-capacity/` (M6).
+- **`content-mods/` M6 landed (2026-11-05)** — the first real content mod,
+  `bag-capacity`, doubling the four leaf-bag capacities (50/200/500/800 →
+  100/400/1000/1600, `-Scale` configurable). `patch_bag_capacity.py` reads the
+  plain UnityFS `coreassets_assets_meta_*.bundle` TypeTrees with UnityPy and
+  rewrites the `capacity` int on the four `*BagCapacity` MonoBehaviours; it
+  refuses to run unless it finds the exact vanilla values (so it never
+  double-scales or patches the wrong build) and re-opens its own output to
+  verify before anything is written back. `apply.ps1` runs on the SDK:
+  `Assert-SafeBaseActive` + `Assert-SafePreconditions` (never mods an unsafe
+  base), stages + self-verifies the patch in a temp dir, `Backup-Original`s the
+  pristine bundle, overwrites, re-reads the LIVE bundle to confirm, auto-restores
+  on failure, then `Register-Mod`s. `revert.ps1` calls `Revert-Mod` for a
+  byte-identical restore. Verified with an isolated round-trip smoke test
+  (temp-sandboxed `LOCALAPPDATA`, copy of the real bundle, nothing real touched;
+  all 16 checks pass: 2x applied + live-verified, patcher rejects non-vanilla
+  input, revert restores byte-for-byte + drains the registry). Requires Python
+  3.12 + UnityPy (3.14 segfaults on the native deps). This closes the safe-base
+  framework — every upload path is shut, play is offline-only in a quarantined
+  save, and content mods are now gated, backed up and reversible.
 
 ## 1.0.0
 Initial release: the `overlay/` example.
