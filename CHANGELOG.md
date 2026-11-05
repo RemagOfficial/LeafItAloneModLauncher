@@ -249,6 +249,23 @@ release notes inside its README.
   `%LOCALAPPDATA%` path expansion and the subprocess runner. Framework-dependent
   publish green; `--self-contained` publish needs the runtime packs (network) —
   documented in `launcher/README.md`.
+- **launcher L1 fix** — dropped `InvariantGlobalization` from the csproj: WPF
+  bindings call `XmlLanguage.GetSpecificCulture()` and throw "Cannot find
+  non-neutral culture related to 'en-us'" without ICU data, so the app started but
+  showed no window (a silent, no-obvious-error crash).
+- **`launcher/` L2 — schema-driven config editor + live config read/write.**
+  `Services/ConfigStore.cs` loads/writes a mod's live `%LOCALAPPDATA%\…\<id>.json`
+  via `JsonNode`, addressing values by dotted path (`sizes.small`) and **preserving
+  every key the manifest does not describe** (`_comment`, `_applyHelper`, …) so the
+  round-tripped file still parses through PowerShell `ConvertFrom-Json` and keeps
+  working with `apply.ps1`. `Services/LauncherState.cs` tracks enable + the config
+  SHA at last apply in `launcher/state.json`; "pending" = live SHA != applied SHA.
+  `ConfigFieldEditor`/`ConfigEditorViewModel` render one control per field by
+  declared `type` (slider+box int/float, checkbox bool, combo enum, text box) with
+  `when`-gated visibility (bag sizes show only in `mode: sizes`), and the Mods list
+  shows a live pending badge. Mods is the interim default tab (L5 restores the
+  Dashboard landing). All 32 headless checks pass (L1 discovery + L2 round-trip,
+  `when` re-gating, pending badge, `ConvertFrom-Json` acceptance).
 
 ## 1.0.0
 Initial release: the `overlay/` example.

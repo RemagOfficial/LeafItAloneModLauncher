@@ -3,6 +3,9 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Leaf it Alone Mod Launcher" Height="640" Width="960"
         WindowStartupLocation="CenterScreen">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolVis" />
+    </Window.Resources>
     <DockPanel LastChildFill="True">
 
         <!-- Status bar (dock bottom, above the log drawer) -->
@@ -29,7 +32,9 @@
             </StackPanel>
         </Border>
 
-        <TabControl Margin="8">
+        <!-- Default tab is Mods for L2 (the working feature). Revert SelectedIndex
+             to 0 (Dashboard) once L5 builds out the health/lifecycle landing. -->
+        <TabControl Margin="8" SelectedIndex="1">
             <!-- Dashboard: lifecycle + the big apply/launch button arrive in L3-L5.
                  For L1 it shows wiring and runs the runner self-test. -->
             <TabItem Header="Dashboard">
@@ -49,53 +54,153 @@
                 </StackPanel>
             </TabItem>
 
-            <!-- Mods: read-only discovery list + a detail pane describing the manifest. -->
+            <!-- Mods: live, schema-driven editor. Each row is generated from the
+                 selected mod's manifest config.fields; the control shown per row is
+                 chosen by the field's declared type, and visibility honours `when`. -->
             <TabItem Header="Mods">
                 <Grid Margin="8">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="320" />
+                        <ColumnDefinition Width="300" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
 
-                    <ListBox Grid.Column="0" ItemsSource="{Binding Mods}"
-                             SelectedItem="{Binding SelectedMod}"
+                    <ListBox Grid.Column="0" ItemsSource="{Binding Editors}"
+                             SelectedItem="{Binding SelectedEditor}"
                              HorizontalContentAlignment="Stretch">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
-                                <StackPanel Margin="4">
-                                    <TextBlock Text="{Binding Name}" FontWeight="Bold" FontSize="13" />
-                                    <TextBlock Text="{Binding Version}" Foreground="Gray" FontSize="11" />
-                                </StackPanel>
+                                <Grid Margin="4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="{Binding Mod.Name}" FontWeight="Bold" FontSize="13" />
+                                        <TextBlock Text="{Binding Mod.Version}" Foreground="Gray" FontSize="11" />
+                                    </StackPanel>
+                                    <Border Grid.Column="1" Background="#FFE9A8" CornerRadius="8"
+                                            Padding="7,1" VerticalAlignment="Center"
+                                            Visibility="{Binding IsPending, Converter={StaticResource BoolVis}}">
+                                        <TextBlock Text="pending" FontSize="11" Foreground="#7A5C00" />
+                                    </Border>
+                                </Grid>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
 
-                    <ScrollViewer Grid.Column="1" Margin="12,4" VerticalScrollBarVisibility="Auto">
+                    <ScrollViewer Grid.Column="1" Margin="12,4" VerticalScrollBarVisibility="Auto"
+                                  DataContext="{Binding SelectedEditor}">
                         <StackPanel>
-                            <TextBlock Text="{Binding SelectedMod.Name}" FontSize="18" FontWeight="Bold" />
-                            <TextBlock Text="{Binding SelectedMod.Version}" Foreground="Gray" />
-                            <TextBlock TextWrapping="Wrap" Margin="0,8,0,0"
-                                       Text="{Binding SelectedMod.Description}" />
+                            <TextBlock Text="{Binding Mod.Name}" FontSize="18" FontWeight="Bold" />
+                            <TextBlock Text="{Binding Mod.Version}" Foreground="Gray" />
+                            <TextBlock TextWrapping="Wrap" Margin="0,8,0,0" Text="{Binding Mod.Description}" />
+
+                            <CheckBox Margin="0,12,0,0" IsChecked="{Binding Enabled, Mode=TwoWay}"
+                                      Content="Enable this mod (applied on Launch in L4)" FontWeight="Bold" />
+
+                            <WrapPanel Margin="0,12,0,0">
+                                <Button Content="Save config" Command="{Binding SaveCommand}"
+                                        Padding="14,6" Margin="0,0,8,0"
+                                        Background="{StaticResource AccentBrush}" Foreground="White" />
+                                <Button Content="Reload" Command="{Binding ReloadCommand}" Padding="14,6" />
+                            </WrapPanel>
+                            <TextBlock Margin="0,6,0,0" Foreground="Gray" TextWrapping="Wrap" Text="{Binding Info}" />
 
                             <TextBlock Margin="0,14,0,2" Text="Config store" FontWeight="Bold" />
-                            <TextBlock TextWrapping="Wrap" Foreground="#333"
-                                       Text="{Binding SelectedMod.Manifest.ConfigPath}" />
+                            <TextBlock TextWrapping="Wrap" Foreground="#333" Text="{Binding LivePath}" />
 
-                            <TextBlock Margin="0,14,0,2" Text="Requires" FontWeight="Bold" />
-                            <TextBlock TextWrapping="Wrap" Foreground="#333"
-                                       Text="{Binding SelectedMod.RequiresSummary}" />
+                            <TextBlock Margin="0,6,0,2" Text="Requires" FontWeight="Bold" />
+                            <TextBlock TextWrapping="Wrap" Foreground="#333" Text="{Binding Mod.RequiresSummary}" />
 
-                            <TextBlock Margin="0,14,0,2" Text="Editable fields (schema-driven editor lands in L2)" FontWeight="Bold" />
-                            <ItemsControl ItemsSource="{Binding SelectedMod.Manifest.Config.Fields}">
+                            <TextBlock Margin="0,14,0,4" Text="Settings" FontWeight="Bold" FontSize="14" />
+                            <ItemsControl ItemsSource="{Binding Fields}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Border BorderBrush="#DDD" BorderThickness="0,0,0,1" Padding="2,6">
-                                            <StackPanel Orientation="Horizontal">
-                                                <TextBlock Text="{Binding Label}" FontWeight="Bold" MinWidth="140" />
-                                                <TextBlock Text="{Binding Key}" Foreground="Gray" MinWidth="130" />
-                                                <TextBlock Text="{Binding Type}" Foreground="Gray" MinWidth="60" />
-                                                <TextBlock Text="{Binding Default}" Foreground="Gray" />
-                                            </StackPanel>
+                                        <Border BorderBrush="#EEE" BorderThickness="0,0,0,1" Padding="2,8"
+                                                Visibility="{Binding IsVisible, Converter={StaticResource BoolVis}}">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="180" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+
+                                                <!-- label + tooltip (help) -->
+                                                <StackPanel Grid.Column="0" ToolTip="{Binding Help}">
+                                                    <TextBlock Text="{Binding Label}" FontWeight="Bold" VerticalAlignment="Center" />
+                                                    <TextBlock Text="{Binding Key}" Foreground="Gray" FontSize="11" />
+                                                </StackPanel>
+
+                                                <!-- numeric: slider + editable box (int or float) -->
+                                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <StackPanel.Style>
+                                                        <Style TargetType="StackPanel">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding Type}" Value="int">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding Type}" Value="float">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </StackPanel.Style>
+                                                    <Slider Width="220" VerticalAlignment="Center"
+                                                            Minimum="{Binding Min}" Maximum="{Binding Max}"
+                                                            TickFrequency="{Binding Step}"
+                                                            Value="{Binding Num, Mode=TwoWay}" />
+                                                    <TextBox Width="96" Margin="10,0,0,0" VerticalAlignment="Center"
+                                                             Text="{Binding ValueText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                                </StackPanel>
+
+                                                <!-- bool -->
+                                                <CheckBox Grid.Column="1" VerticalAlignment="Center"
+                                                          IsChecked="{Binding Bool, Mode=TwoWay}">
+                                                    <CheckBox.Style>
+                                                        <Style TargetType="CheckBox">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding Type}" Value="bool">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </CheckBox.Style>
+                                                </CheckBox>
+
+                                                <!-- enum -->
+                                                <ComboBox Grid.Column="1" Width="200" HorizontalAlignment="Left"
+                                                          VerticalAlignment="Center"
+                                                          ItemsSource="{Binding Options}"
+                                                          SelectedItem="{Binding Str, Mode=TwoWay}">
+                                                    <ComboBox.Style>
+                                                        <Style TargetType="ComboBox">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding Type}" Value="enum">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </ComboBox.Style>
+                                                </ComboBox>
+
+                                                <!-- text -->
+                                                <TextBox Grid.Column="1" Width="260" HorizontalAlignment="Left"
+                                                         VerticalAlignment="Center"
+                                                         Text="{Binding Str, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+                                                    <TextBox.Style>
+                                                        <Style TargetType="TextBox">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding Type}" Value="text">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBox.Style>
+                                                </TextBox>
+                                            </Grid>
                                         </Border>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>

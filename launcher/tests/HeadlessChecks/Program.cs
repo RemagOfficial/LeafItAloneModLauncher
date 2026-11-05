@@ -1,8 +1,10 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Text.Json.Nodes;
 using LeafItAlone.Launcher.Models;
 using LeafItAlone.Launcher.Services;
+using LeafItAlone.Launcher.ViewModels;
 
 namespace LeafItAlone.Launcher.Tests;
 
@@ -17,11 +19,13 @@ internal static class Program
 
     private static int Main()
     {
-        Console.WriteLine("Launcher L1 headless checks");
+        Console.WriteLine("Launcher L1/L2 headless checks");
         Console.WriteLine("===========================");
 
         CheckRepoAndDiscovery();
         CheckEnvPathExpansion();
+        CheckConfigStoreRoundTrip();
+        CheckConfigEditorRoundTrip();
         ProcessRunnerCheck().GetAwaiter().GetResult();
 
         Console.WriteLine();
@@ -82,6 +86,94 @@ internal static class Program
                   && expanded.StartsWith(local, StringComparison.OrdinalIgnoreCase)
                   && Directory.Exists(local);
         Assert(ok, "configPath expands %LOCALAPPDATA% to the real root", expanded);
+    }
+
+    private static void CheckConfigStoreRoundTrip()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "leaf-l2-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "cfg.json");
+        try
+        {
+            // A config with keys the launcher schema does NOT describe (must survive)
+            // plus a nested note inside an object we do edit.
+            File.WriteAllText(path,
+                "{\"_comment\":\"keep me\",\"_applyHelper\":\"C:\\\\x.ps1\",\"mode\":\"multiplier\"," +
+                "\"multiplier\":2.0,\"sizes\":{\"small\":100,\"_note\":\"nested keep\",\"medium\":400,\"big\":1000,\"giant\":1600}}");
+
+            var root = ConfigStore.Load(path);
+            Assert(Equals(ConfigStore.GetByPath(root, "sizes.small")?.GetValue<int>(), 100),
+                "dotted get sizes.small", "read failed");
+
+            string shaBefore = ConfigStore.ComputeSha(path);
+            ConfigStore.SetByPath(root, "multiplier", JsonValue.Create(3.5));
+            ConfigStore.SetByPath(root, "sizes.small", JsonValue.Create(250));
+            ConfigStore.Save(path, root);
+
+            var reloaded = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+            Assert(Equals(reloaded["_comment"]?.GetValue<string>(), "keep me"), "_comment preserved", reloaded["_comment"]?.ToString() ?? "gone");
+            Assert(reloaded["_applyHelper"] is not null, "_applyHelper preserved");
+            Assert(Equals(reloaded["sizes"]?["_note"]?.GetValue<string>(), "nested keep"), "nested sibling preserved");
+            Assert(Equals(reloaded["multiplier"]?.GetValue<double>(), 3.5), "multiplier written", reloaded["multiplier"]?.ToString() ?? "?");
+            Assert(Equals(reloaded["sizes"]?["small"]?.GetValue<int>(), 250), "sizes.small written");
+            Assert(Equals(reloaded["sizes"]?["medium"]?.GetValue<int>(), 400), "sizes.medium untouched");
+            Assert(ConfigStore.ComputeSha(path) != shaBefore, "sha changes after edit");
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    private static void CheckConfigEditorRoundTrip()
+    {
+        var loc = new RepoLocator();
+        if (!loc.TryLocate(AppContext.BaseDirectory)) { Assert(false, "editor test located content root", loc.LastError ?? ""); return; }
+        var result = new ModDiscovery().Discover(loc.ModsRoot!);
+        var bag = result.Mods.FirstOrDefault(m => m.Id == "bag-capacity");
+        if (bag is null) { Assert(false, "editor test found bag-capacity"); return; }
+
+        var dir = Path.Combine(Path.GetTempPath(), "leaf-l2e-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "bag-capacity.json");
+        try
+        {
+            File.WriteAllText(path,
+                "{\"_comment\":\"keep\",\"_applyHelper\":\"C:\\\\h.ps1\",\"mode\":\"multiplier\",\"multiplier\":2.0," +
+                "\"sizes\":{\"small\":100,\"medium\":400,\"big\":1000,\"giant\":1600}}");
+
+            bag.Manifest.ConfigPath = path;   // point the editor at a temp store, never the user's live file
+            var editor = new ConfigEditorViewModel(bag);
+            Assert(editor.Fields.Count == 6, "editor built 6 fields", editor.Fields.Count.ToString());
+
+            // `when` gating: sizes.* hidden while mode==multiplier, multiplier visible.
+            var multiplier = editor.Fields.First(f => f.Key == "multiplier");
+            var small = editor.Fields.First(f => f.Key == "sizes.small");
+            Assert(multiplier.IsVisible, "multiplier visible in multiplier mode");
+            Assert(!small.IsVisible, "sizes.small hidden in multiplier mode");
+
+            // Switching mode re-gates visibility.
+            editor.Fields.First(f => f.Key == "mode").Str = "sizes";
+            Assert(small.IsVisible && !multiplier.IsVisible, "visibility re-gates on mode change");
+
+            // Edit a value and save; confirm the live file + extras + pending.
+            small.Num = 333;
+            bool pendingBefore = editor.IsPending;
+            editor.Save();
+            var saved = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+            Assert(Equals(saved["sizes"]?["small"]?.GetValue<int>(), 333), "editor wrote sizes.small");
+            Assert(Equals(saved["_comment"]?.GetValue<string>(), "keep"), "editor preserved _comment");
+            Assert(Equals(saved["_applyHelper"]?.GetValue<string>(), @"C:\h.ps1"), "editor preserved _applyHelper");
+            Assert(pendingBefore && editor.IsPending, "editor reports pending until applied (L3)");
+
+            // PowerShell ConvertFrom-Json must accept the file the launcher wrote (plan verify).
+            var runner = new ProcessRunner();
+            string ps = Environment.GetFolderPath(Environment.SpecialFolder.System) + "\\WindowsPowerShell\\v1.0\\powershell.exe";
+            int exit = runner.RunAsync(ps, new[]
+                {
+                    "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+                    "$null = Get-Content -LiteralPath '" + path + "' -Raw | ConvertFrom-Json; exit 0"
+                }, timeout: TimeSpan.FromSeconds(20)).GetAwaiter().GetResult().ExitCode;
+            Assert(exit == 0, "ConvertFrom-Json parses the saved config", $"ps exit {exit}");
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
     }
 
     private static async System.Threading.Tasks.Task ProcessRunnerCheck()

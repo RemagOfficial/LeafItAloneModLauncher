@@ -15,23 +15,25 @@ unchanged.
 
 ## Status
 
-This folder currently holds **milestone L1** (scaffold):
+Milestones **L1 (scaffold)** and **L2 (config editing)** are complete.
 
-- a .NET 8 **WPF** app that builds and runs,
-- a **subprocess runner** (`Services/ProcessRunner.cs`) that shells out to
-  PowerShell with correct quoting, streams stdout/stderr into the in-app **Output**
-  log, enforces a timeout, and returns the exit code,
-- **mod discovery** (`Services/ModDiscovery.cs`) that reads each
-  `content-mods/<id>/mod.json` manifest,
-- the **`mod.json` manifest schema** (see below), with `bag-capacity` refactored to
-  ship one,
-- a **read-only Mods list** (name / version / description / config fields) so the
-  data-driven path is proven before any editing UI is built.
+**L1** — WPF app that builds and runs; the subprocess `ProcessRunner` (PowerShell
+`-File`, `ArgumentList` quoting, streamed Output log, timeout + exit code); mod
+discovery from `content-mods/<id>/mod.json`; the manifest schema; `bag-capacity`
+refactored to ship one; a read-only mod list.
 
-Config **editing** (L2), **apply/revert orchestration** (L3), **Apply & Launch**
-(L4), the safe-base **lifecycle + first-run wizard** (L5), the overlay slimdown
-(L6), the **bundled Python runtime** (L7) and **distribution polish** (L8) come in
-later milestones.
+**L2** — the **schema-driven editor**: selecting a mod renders one control per
+manifest field by declared `type` (slider+box for int/float, checkbox for bool,
+combo for enum, text box for text), with `when`-gated visibility (e.g. the bag
+sizes only show in `mode: sizes`). Edits write the live
+`%LOCALAPPDATA%\LeafItAloneSafe\<id>.json`, **preserving every key the schema does
+not mention** (`_comment`, `_applyHelper`, …), and the list shows a **pending**
+badge when the config's SHA differs from the SHA recorded at the last apply. The
+enable toggle and pending state persist to `launcher/state.json`.
+
+Still ahead: **apply/revert orchestration** (L3), **Apply & Launch** (L4), the safe-base
+**lifecycle + first-run wizard** (L5), the overlay slimdown (L6), the **bundled Python
+runtime** (L7) and **distribution polish** (L8).
 
 ## Layout
 

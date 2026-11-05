@@ -8,16 +8,19 @@ using LeafItAlone.Launcher.Services;
 namespace LeafItAlone.Launcher.ViewModels;
 
 /// <summary>
-/// Backing VM for <c>MainWindow</c>. L1 scope: locate the content root, discover
-/// mods from their manifests, show them read-only, and prove the subprocess
-/// runner streams into the log drawer. Config editing (L2) and apply orchestration
-/// (L3+) hang off this same VM later.
+/// Backing VM for <c>MainWindow</c>. L2 scope: locate the content root, discover
+/// mods from their manifests, and build a schema-driven <see cref="ConfigEditorViewModel"/>
+/// for each (list shows a live "pending" badge; the detail pane is the editor).
+/// Apply orchestration (L3), launch (L4) and the safe-base lifecycle (L5) hang off
+/// this same VM later.
 /// </summary>
 public sealed class MainViewModel : ObservableObject
 {
     private readonly RepoLocator _locator = new();
     private readonly ModDiscovery _discovery = new();
     private readonly ProcessRunner _runner = new();
+    private LauncherState _state = new();
+    private string _statePath = "";
 
     public MainViewModel()
     {
@@ -29,17 +32,23 @@ public sealed class MainViewModel : ObservableObject
         Rescan();
     }
 
-    public ObservableCollection<ModInfo> Mods { get; } = new();
+    public ObservableCollection<ConfigEditorViewModel> Editors { get; } = new();
     public ObservableCollection<string> LogLines { get; } = new();
 
-    private ModInfo? _selected;
-    public ModInfo? SelectedMod { get => _selected; set => Set(ref _selected, value); }
+    private ConfigEditorViewModel? _selectedEditor;
+    public ConfigEditorViewModel? SelectedEditor
+    {
+        get => _selectedEditor;
+        set => Set(ref _selectedEditor, value);
+    }
 
     private string _statusText = "";
     public string StatusText { get => _statusText; set => Set(ref _statusText, value); }
 
     private string _rootPath = "";
     public string RootPath { get => _rootPath; set => Set(ref _rootPath, value); }
+
+    public int PendingCount => Editors.Count(e => e.IsPending);
 
     private bool _isBusy;
     public bool IsBusy
@@ -51,13 +60,13 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand RescanCommand { get; }
     public RelayCommand DemoRunnerCommand { get; }
 
-    /// <summary>Populate the read-only mod list straight from the manifests on disk.</summary>
+    /// <summary>Rebuild the editor set straight from the manifests + live configs on disk.</summary>
     public void Rescan()
     {
         Log("Scanning for mods...");
         if (!_locator.TryLocate())
         {
-            Mods.Clear();
+            Editors.Clear();
             RootPath = "";
             StatusText = "Content root not found.";
             Log(_locator.LastError ?? "unknown locator error");
@@ -65,18 +74,45 @@ public sealed class MainViewModel : ObservableObject
         }
 
         RootPath = _locator.Root!;
+        _statePath = LauncherState.DefaultPath();
+        _state = LauncherState.Load(_statePath);
+
         var result = _discovery.Discover(_locator.ModsRoot!);
-
-        Mods.Clear();
-        foreach (var m in result.Mods) Mods.Add(m);
-
         foreach (var err in result.Errors) Log("[manifest error] " + err);
 
-        StatusText = Mods.Count == 0
-            ? $"No mod manifests found under {result.Mods.Count} scanned at {RootPath}"
-            : $"{Mods.Count} mod(s) discovered at {RootPath}";
-        SelectedMod ??= Mods.FirstOrDefault();
+        Editors.Clear();
+        foreach (var mod in result.Mods)
+        {
+            var editor = new ConfigEditorViewModel(mod, Log);
+            editor.ApplyState(_state.For(mod.Id));
+            editor.PropertyChanged += (_, e) => OnEditorPropertyChanged(editor, e.PropertyName);
+            Editors.Add(editor);
+        }
+        SelectedEditor = Editors.FirstOrDefault();
+
+        StatusText = Editors.Count == 0
+            ? $"No mod manifests found at {RootPath}"
+            : $"{Editors.Count} mod(s) at {RootPath}";
+        RaisePendingCount();
     }
+
+    /// <summary>Persist the enable toggle to state.json the moment it changes.</summary>
+    private void OnEditorPropertyChanged(ConfigEditorViewModel editor, string? name)
+    {
+        if (name == nameof(ConfigEditorViewModel.Enabled))
+        {
+            _state.For(editor.Mod.Id).Enabled = editor.Enabled;
+            try { _state.Save(_statePath); }
+            catch (Exception ex) { Log("state save failed: " + ex.Message); }
+            RaisePendingCount();
+        }
+        else if (name == nameof(ConfigEditorViewModel.IsPending))
+        {
+            RaisePendingCount();
+        }
+    }
+
+    private void RaisePendingCount() => OnPropertyChanged(nameof(PendingCount));
 
     /// <summary>
     /// L1 verification that the subprocess plumbing works end to end: run a trivial
