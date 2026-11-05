@@ -31,6 +31,17 @@ encrypted `global-metadata.dat`). `patch_bag_capacity.py` does the edit; it
 refuses to run unless it finds the exact vanilla values, and it re-opens its own
 output to verify the new numbers before writing anything back into the game.
 
+**The Addressables wrinkle.** This game loads bundles through Unity
+Addressables 2.9, which verifies each bundle's CRC against `aa/catalog.bin`
+before loading (`AssetBundle.LoadFromFileAsync(path, crc)`). Repacking the bundle
+changes its CRC, so on a stock catalog the game **refuses the bundle and hangs on
+a black screen** after the logo. `apply.ps1` therefore also runs
+`patch_catalog.py`, which nulls *this one bundle's* CRC in the catalog
+(`crc = 0` tells Unity to skip the check) — guarded so it only fires on a unique
+match whose adjacent field is the vanilla bundle size. Both the bundle and the
+catalog are backed up and restored together, so `revert.ps1` puts everything
+back exactly as it was.
+
 ## Requirements
 
 - Windows x64, **Leaf it Alone** on Steam (you must own the game).
@@ -94,12 +105,12 @@ C:\Python312\python.exe patch_bag_capacity.py --verify-only `
 ## Known risks / troubleshooting
 
 - **Steam "verify integrity of game files"** will re-download the original
-  bundle and silently undo the mod. That's harmless — just run `apply.ps1`
-  again (safe-base still guards you the whole time).
-- **Addressables**: the game loads bundles through Unity Addressables. Local
-  bundles load without a CRC check, so a repacked bundle is normally fine, but
-  if the game ever refuses to load bags, run `revert.ps1` and note it — the
-  fallback would be to also refresh the bundle hash in the Addressables catalog.
+  bundle **and** `catalog.bin` and silently undo the mod. That's harmless — just
+  run `apply.ps1` again (safe-base still guards you the whole time).
+- **Addressables CRC** is handled automatically (see above). If a future game
+  update changes the bundle's vanilla CRC, `patch_catalog.py` refuses (the anchor
+  isn't found) and `apply.ps1` restores both files — you'd just update the
+  `-VanillaCrc` value to the new one from a fresh log line.
 - **Game updated** → the bundle's filename hash may change and `apply.ps1` will
   report "target bundle not found". Re-check the path in
   `StreamingAssets\aa\StandaloneWindows64\` and pass it with `-BundlePath`, or
@@ -111,9 +122,10 @@ C:\Python312\python.exe patch_bag_capacity.py --verify-only `
 
 | File | Role |
 |---|---|
-| `apply.ps1`   | installer: safety asserts → stage → backup → apply → verify → register |
-| `revert.ps1`  | undo via the safe-base registry (byte-identical restore) |
+| `apply.ps1`   | installer: safety asserts → stage → backup bundle+catalog → null catalog CRC → apply → verify → register |
+| `revert.ps1`  | undo via the safe-base registry (byte-identical restore of both files) |
 | `patch_bag_capacity.py` | the UnityPy editor (self-verifying, refuses non-vanilla input) |
+| `patch_catalog.py` | nulls this bundle's CRC in `aa/catalog.bin` (guarded: unique match + adjacent size) |
 
 ## License
 

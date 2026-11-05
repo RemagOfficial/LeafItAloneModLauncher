@@ -95,6 +95,14 @@ Revert-Mod -Name "bag-capacity"     # restores byte-identical original + unregis
 - **Never** install DLLs or firewall rules — that's `safe-base`.
 - **Always** call `Backup-Original` before the edit, and register files with
   the base so `uninstall-all.ps1` can cleanly undo everything.
+- **Null the bundle's catalog CRC.** This game uses Unity Addressables 2.9,
+  which verifies every bundle against a CRC in `aa/catalog.bin` before loading;
+  a repacked bundle with a stale CRC makes the game **hang on a black screen**
+  ("CRC Mismatch ... Will not load AssetBundle" in `Player.log`). Any mod that
+  replaces a bundle must also zero that bundle's CRC — reuse
+  [`bag-capacity/patch_catalog.py`](bag-capacity/patch_catalog.py) (guarded:
+  unique anchor + adjacent size) and register `catalog.bin` alongside the bundle
+  so revert restores both.
 - **Ship no game files.** Bundle-editing patches run on the user's own
   bundles. Only `patch.py` and the scripts are published.
 - **Do not** try to disable leaderboards / achievements / Steam within a

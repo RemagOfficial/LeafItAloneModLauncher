@@ -184,6 +184,18 @@ release notes inside its README.
   3.12 + UnityPy (3.14 segfaults on the native deps). This closes the safe-base
   framework — every upload path is shut, play is offline-only in a quarantined
   save, and content mods are now gated, backed up and reversible.
+- **`content-mods/` M6 follow-up — Addressables CRC (found on the in-game test).**
+  The first apply hung the game on a black screen: `Player.log` showed
+  `CRC Mismatch. Provided cd9380f1, calculated ... Will not load AssetBundle`.
+  The game loads bundles through Unity Addressables 2.9, which CRC-verifies each
+  bundle against `aa/catalog.bin`, so a repacked bundle is refused. Added
+  `patch_catalog.py`: it nulls this bundle's catalog CRC (little-endian, uniquely
+  located and confirmed by the adjacent vanilla-size field; `crc = 0` = "skip
+  check", file length unchanged so all other offsets stay valid). `apply.ps1`
+  now backs up, edits and registers BOTH the bundle and `catalog.bin`, and rolls
+  both back on any failure; `revert.ps1` restores both byte-for-byte. Verified by
+  an extended round-trip smoke test (9/9, including byte-identical revert of the
+  665 KB catalog).
 
 ## 1.0.0
 Initial release: the `overlay/` example.
