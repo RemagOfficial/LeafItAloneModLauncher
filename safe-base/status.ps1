@@ -119,10 +119,12 @@ if ($m -and $m.saveIsolation) {
     }
     Write-Host "  pre-move info  : $($m.saveIsolation.preMoveCount) file(s), $($m.saveIsolation.preMoveBytes) bytes at install time"
     if ($m.saveIsolation.steamCloudVdf) {
-        Write-Host "  Steam Cloud    : marker was present at install (steam_autocloud.vdf moved with backup)" -ForegroundColor Yellow
+        Write-Host "  Steam Cloud    : marker was present at install (moved to backup with Saves/)"
         if (Test-SteamCloudMarker -SavePath $orig) {
             Write-Host "                 !! a marker has REAPPEARED in the current Saves/ - Steam may be actively syncing" -ForegroundColor Red
             Write-Host "                    Disable Steam Cloud for the game: Steam Library -> right-click Leaf it Alone -> Properties -> Updates"
+        } else {
+            Write-Host "                 current Saves/ has no marker (fine either way; the isolated folder is a dead drop)" -ForegroundColor DarkGray
         }
     } else {
         Write-Host "  Steam Cloud    : marker absent at install time (no cloud sync configured for this account)"

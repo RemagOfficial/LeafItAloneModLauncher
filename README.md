@@ -22,10 +22,11 @@ protected Unity IL2CPP build. Fully shipped, documented and videoed.
 ### `safe-base/`
 The **offline-safety framework**. Installs once, keeps modded play from ever
 touching the game's leaderboards or your real save file. **Status: M1 + M2 +
-M3 landed** — the firewall block, the Steamworks stub proxy AND save
-isolation are implemented and reversible today. M1 and M2 were verified
-in-game 2026-11-05 (leaderboard renders empty, game launches normally).
-Three upload paths closed, one leak class mitigated:
+M3 landed and in-game tested (2026-11-05)** — the firewall block, the
+Steamworks stub proxy AND save isolation are implemented, reversible and
+verified. The game launches normally, the leaderboard renders empty and a
+modded play-session writes to a throwaway `Saves/` that never touches your
+real one. Three upload paths closed, one leak class mitigated:
 - **[M1 ✅]** Windows Firewall outbound-block on `Leaf it Alone.exe`,
   verified at install (rule + service + manifest). Closes the game's own
   HTTPS path.
@@ -42,10 +43,13 @@ Three upload paths closed, one leak class mitigated:
   deleted). Refuses to run if the game is currently active. If Steam Cloud
   is enabled on the game, install prints a warning with the click-path to
   disable it manually (safe-base never edits Steam's own config).
-- **[M4]** A `version.dll` overlay that **refuses to run** unless all three
-  preconditions hold, plus the live outbound `connect()` probe from inside
-  the game's own process, and a persistent `OFFLINE · MODDED PLAY · SCORES
-  WILL NOT BE SUBMITTED` banner.
+- **[M4]** A persistent `OFFLINE · MODDED PLAY · SCORES WILL NOT BE
+  SUBMITTED` banner drawn from inside the game's own process (the same
+  `version.dll` that ships the cosmetic HUD), with a **one-shot** startup
+  check: file-size match on the Steam proxy, presence of the `Saves/`
+  isolation marker, and a live `connect(1.1.1.1:443)` outbound probe that
+  only the game process can perform meaningfully. Failing any check turns
+  the banner red; safe-base does not police manual tampering mid-play.
 - **[M5]** A PowerShell SDK (`base.psm1`) with `Assert-SafeBaseActive`,
   `Backup-Original`, `Register-Mod` / `Unregister-Mod` that content mods
   import — so no content mod ever has to repeat any of this.

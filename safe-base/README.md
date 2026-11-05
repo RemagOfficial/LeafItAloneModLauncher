@@ -1,11 +1,9 @@
 # `safe-base/` — Offline-safety framework
 
-**Status: M1 + M2 + M3 landed. M1 and M2 are in-game tested (2026-11-05). M3
-adds save isolation: the game's `Saves/` folder is moved aside on install and
-restored on uninstall (modded saves are parked, never deleted).** Together
-the three layers close every upload path the game process can initiate AND
-keep modded progression off your real save. M4-M6 (DLL trip-wire, PS SDK,
-first content mod) are still planned; roadmap at the bottom.
+**Status: M1 + M2 + M3 landed and in-game tested (2026-11-05). The three
+layers close every upload path the game process can initiate AND keep modded
+progression off your real save. M4-M6 (banner overlay + `connect()` probe, PS
+SDK, first content mod) are still planned; roadmap at the bottom.**
 
 Install this **before** any mod in `../content-mods/`.
 
@@ -218,7 +216,7 @@ Delivered one milestone at a time, each independently testable before the next.
      then `[M1] Removing firewall rule...`, then the manifest. Verify the
      DLL size at the game's path is back to ~320 KB and its SHA matches the
      backup the manifest recorded.
-- **M3 - LANDED** (in-game test pending) — Save isolation. `install.ps1`
+- **M3 - LANDED, TESTED** (2026-11-05, in-game) — Save isolation. `install.ps1`
   refuses if the game is running, records the pre-move Saves/ file list (per
   file: rel path, size, SHA-256) into the manifest, does an atomic
   same-drive rename into `%LOCALAPPDATA%\LeafItAloneSafe\backup\saves-<ts>\`,
@@ -254,10 +252,21 @@ Delivered one milestone at a time, each independently testable before the next.
      game one more time - your vanilla progression should be exactly what
      you had before all of this.
   9. `status.ps1` -> "not installed".
-- **M4** — `version.dll` with preconditions + banner + the live
-  `connect(1.1.1.1:443)` outbound probe (only meaningful from the game's own
-  process). Verify the trip-wire (delete the firewall rule mid-session, see
-  the mod go inert).
+- **M4 (planned)** — Persistent banner + startup preconditions, merged into
+  the existing `../overlay/version.dll` (one DLL, HUD and safety share a
+  binary; `LeafOverlay.ini` decides what draws). When `[safebase] Enabled` is
+  true the overlay draws a non-hideable banner ("OFFLINE · MODDED PLAY ·
+  SCORES WILL NOT BE SUBMITTED") and runs a **one-shot** startup check from
+  inside the game process: file-size match on the Steam proxy, presence of
+  the `Saves/` isolation marker, and a live `connect(1.1.1.1:443)` probe (a
+  program-scoped firewall rule can only be measured from the exe it scopes
+  to, so the probe is genuinely informative in-DLL and not from `status.ps1`).
+  If any check fails the banner turns red and the details go to
+  `LeafOverlay.log`. We do **not** terminate the game or block play: a user
+  who manually breaks a precondition is responsible for their own choices;
+  safe-base only surfaces what its install did. `install.ps1` drops
+  `version.dll` + `LeafOverlay.ini` (backing up any existing overlay install
+  first, same pattern as `steam_api64.dll`).
 - **M5** — `base.psm1` SDK + registry + `uninstall-all.ps1` + `recheck.ps1`.
 - **M6** — First content mod (`bag-capacity`) as the SDK's real test.
 
@@ -275,7 +284,7 @@ plus save-mediated re-uploads. Three mitigations.
 | Steam Cloud save sync (game-mediated) | Game enters cloud-enabled state and hands files to Steam client for push | ❌ | ✅ blocked (init fail means game never enters cloud state) | ✅ belt-and-braces (Saves/ moved aside, marker file travels with backup) | **M2 + M3** |
 | Steam Cloud rehydration (client-mediated) | Steam client pushes or pulls files at the Saves/ path independently of the game | ❌ | ❌ (proxy doesn't reach into Steam's own sync scheduler) | ⚠️ mitigated (fresh empty Saves/ has no cloud identity, but if Steam has a cached cloud copy it may still sync files back into the placeholder) | **M3 manual cloud-disable prompt** (safe-base does not edit Steam's config; you click it off) |
 | Save file re-upload on next online launch (queued or embedded submissions) | Uninstall → play vanilla on the same save → the game (or Steam) resubmits what's in the save | ❌ | ❌ (proxy's gone after uninstall) | ✅ closes it - modded Saves/ is parked outside the game path, so vanilla play after uninstall uses the pre-install save, which never saw the mod | **M3** |
-| Rule silently removed while game is running (VPN resets firewall, group policy, malware, user tinkering) | Game keeps playing but block is gone | ❌ (no trip-wire yet) | ❌ (DLL file is still our proxy, so Steam uploads stay blocked, but the web-service path reopens) | ❌ (Saves/ isolation is file-based and unaffected by rule state, but new modded writes still go into the isolated Saves/ - fine) | **M4** (in-DLL precondition re-check every ~30 s + live `connect()` probe + trip-wire banner) |
+| Rule silently removed while game is running (VPN resets firewall, group policy, malware, user tinkering) | Game keeps playing but block is gone | ❌ (no trip-wire) | ❌ (DLL file is still our proxy, so Steam uploads stay blocked, but the web-service path reopens) | ❌ (Saves/ isolation is file-based and unaffected by rule state, but new modded writes still go into the isolated Saves/ - fine) | **Accepted risk.** safe-base does not police the user's own machine after install. The M4 banner runs a one-shot outbound probe at startup and reflects the state install left behind. If you turn the rule off mid-session, that's your call. Reinstall (or `status.ps1`) re-verifies. |
 
 **The takeaway after M3:** every network call the *game process* can initiate
 is stopped (M1 + M2), and modded progression is written to a throwaway save
@@ -283,15 +292,17 @@ that never touches your real one (M3). The remaining leaks are:
 - Steam client's **own** cloud rehydration into the isolated `Saves/` (rare,
   only if you don't disable Steam Cloud when prompted) — M3's install-time
   warning + `status.ps1` rehydration check.
-- Silent removal of the firewall rule (or the proxy DLL) **during a session**
-  — M4's `version.dll` trip-wire.
+- Firewall rule or proxy DLL tampering **during a session** — accepted risk.
+  M4's startup banner verifies state once when the game starts and shows
+  red/green; we don't police manual changes mid-play.
 
 ## What M1 + M2 + M3 don't do yet
 
-- Detect the firewall rule being removed mid-session — ❌ **no**, M4.
-- Detect the proxy DLL being replaced with the real one mid-session — ❌ **no**, M4.
-- Detect the modded Saves/ being manually dropped back into place by the
-  user mid-session — ❌ **no**, M4.
+- Show the user at a glance that they're playing safely — ❌ **no**, M4
+  (persistent banner drawn from inside the game process).
+- Prove outbound is blocked from the game's own process (a PowerShell
+  `Test-NetConnection` tests PowerShell, not the game) — ❌ **no**, M4
+  (live `connect(1.1.1.1:443)` at startup).
 - Programmatically disable Steam Cloud (edits `localconfig.vdf`) — deferred
   behind a manual prompt for now; revisit if the rehydration case shows up.
 - The `base.psm1` SDK content mods use — ❌ **no**, M5.

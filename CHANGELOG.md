@@ -76,6 +76,15 @@ release notes inside its README.
   Saves/ folder (four files including a fake steam_autocloud.vdf): move,
   placeholder + marker write, modded-content write, park, restore all
   round-trip correctly.
+- **`safe-base/` M3 tested (2026-11-05)**. Full cycle in-game: close game,
+  install, launch (first-run state, no saved slots), play, save, quit,
+  uninstall, relaunch vanilla. All three layers restore correctly; original
+  Saves/ returns; modded Saves/ parks under
+  `%LOCALAPPDATA%\LeafItAloneSafe\backup\saves-modded-<ts>\`. Noted: the
+  Steam Cloud line in `status.ps1` read alarming ("marker was present at
+  install" in yellow) even when cloud was already off. Reworded to neutral
+  color with the warning reserved for the actual rehydration case (a marker
+  reappearing in the live isolated Saves/).
 - First content mod planned: `content-mods/bag-capacity/` (M6).
 
 ## 1.0.0
