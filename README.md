@@ -21,23 +21,29 @@ protected Unity IL2CPP build. Fully shipped, documented and videoed.
 
 ### `safe-base/`
 The **offline-safety framework**. Installs once, keeps modded play from ever
-touching the game's leaderboards. Provides:
-- Windows Firewall outbound-block on `Leaf it Alone.exe`, verified at install.
-- A `steam_api64.dll` proxy that makes `SteamAPI_Init` fail — the game thinks
-  Steam isn't running, so **Steamworks achievements and leaderboards can't
-  record anything**.
-- **Save isolation** on install (real save moved aside, empty `UserData/` made);
-  the modded save is **discarded on uninstall** so queued submissions never
-  leak when you go back online.
-- A `version.dll` overlay that **refuses to run** unless all three preconditions
-  hold, and shows a persistent `OFFLINE · MODDED PLAY · SCORES WILL NOT BE
-  SUBMITTED` banner so you always know.
-- A PowerShell SDK (`base.psm1`) with `Assert-SafeBaseActive`,
+touching the game's leaderboards. **Status: M1 landed** — the firewall
+block is implemented, tested and reversible today. The other four pieces
+below are designed and staged as M2-M5:
+- **[M1 ✅]** Windows Firewall outbound-block on `Leaf it Alone.exe`,
+  verified at install (rule + service + manifest).
+- **[M2]** A `steam_api64.dll` proxy that makes `SteamAPI_Init` fail — the
+  game thinks Steam isn't running, so **Steamworks achievements and
+  leaderboards can't record anything**.
+- **[M3] Save isolation** on install (real save moved aside, empty
+  `UserData/` made); the modded save is **discarded on uninstall** so queued
+  submissions never leak when you go back online.
+- **[M4]** A `version.dll` overlay that **refuses to run** unless all three
+  preconditions hold, plus the live outbound `connect()` probe from inside
+  the game's own process, and a persistent `OFFLINE · MODDED PLAY · SCORES
+  WILL NOT BE SUBMITTED` banner.
+- **[M5]** A PowerShell SDK (`base.psm1`) with `Assert-SafeBaseActive`,
   `Backup-Original`, `Register-Mod` / `Unregister-Mod` that content mods
   import — so no content mod ever has to repeat any of this.
 
 Install `safe-base` once. Content mods depend on it. **If you plan to change
-in-game numbers, install the base first.**
+in-game numbers, install the base first** (but content mods themselves need
+M5 to be safe to distribute — see the roadmap in
+[`safe-base/README.md`](safe-base/README.md)).
 
 ### `content-mods/`
 Small patchers that change what's actually *in* the game — data-driven edits to
@@ -65,9 +71,10 @@ content-mods/<name>/
 | I want to… | Do this |
 |---|---|
 | Just see how the DLL-hijack overlay works | Follow [`overlay/README.md`](overlay/README.md) |
-| Play the game with mods without polluting the leaderboard | Install [`safe-base/`](safe-base/README.md) once |
-| Actually change gameplay content (bigger bag, more leaves, faster seal) | Install `safe-base/`, then `apply.ps1` from a mod in [`content-mods/`](content-mods/README.md) |
-| Undo everything and go back to vanilla | `safe-base/uninstall-all.ps1` — reverts every registered content mod, restores your original save, removes the firewall rule |
+| Try the M1 firewall block now (no content mods yet) | `safe-base/install.ps1` → play → `safe-base/uninstall.ps1`. Status any time: `safe-base/status.ps1` |
+| Play the game with mods without polluting the leaderboard (M1-M5 all landed) | Install `safe-base/` once |
+| Actually change gameplay content (bigger bag, more leaves, faster seal) | Waiting on safe-base M5. Then: install `safe-base/`, then `apply.ps1` from a mod in [`content-mods/`](content-mods/README.md) |
+| Undo everything and go back to vanilla | Currently `safe-base/uninstall.ps1`. Once content mods exist: `safe-base/uninstall-all.ps1` (M5) — reverts every registered content mod, restores your original save, removes the firewall rule |
 
 ## Why the split exists
 
