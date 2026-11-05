@@ -115,16 +115,15 @@ Revert-Mod -Name "bag-capacity"     # restores byte-identical original + unregis
   `apply.ps1` → relaunch** iterates cleanly with no stacking (see
   [`bag-capacity/`](bag-capacity/)). Always re-patch from a known vanilla
   baseline (the pristine backup), never from the already-modded live file.
-- **Make configs editable in-game (mod support).** Because managed in-process
-  code is impossible here (encrypted `global-metadata.dat`), the only in-process
-  surface is the native `version.dll` overlay. The overlay can therefore show a
-  hidden, key-toggled editor panel (bag-capacity: **F8**) that reads/writes the
-  same canonical JSON. Saving from in game cannot re-patch the locked bundle
-  immediately, so `apply.ps1` stores an absolute `_applyHelper` path in the
-  config and the overlay launches `<mod>/apply-on-exit.ps1`, which waits for the
-  game to close and re-applies — in-game edits go live next launch. Keep all
-  overlay paths absolute (built from `%LOCALAPPDATA%`), never DLL-relative: the
-  game and the user profile can be on different drives.
+- **Configs live in one canonical JSON the launcher edits.** Because managed
+  in-process code is impossible here (encrypted `global-metadata.dat`), there is
+  no in-process editor panel; the WPF launcher (L2) is the surface for changing a
+  mod's values. `apply.ps1` reads the same canonical
+  `%LOCALAPPDATA%\LeafItAloneSafe\<mod>.json` the launcher writes (seeded from the
+  repo template on first apply), so the loop is **set in launcher → `apply.ps1` →
+  relaunch**. The native `version.dll` overlay is banner-only and never edits a
+  config. (The retired M8 in-game F8 editor and its `apply-on-exit.ps1` waiter were
+  removed at L6.)
 - **Do not** try to disable leaderboards / achievements / Steam within a
   content mod. The base does it. If a mod needs a gameplay-only "no scoring
   this run" flag, use in-game rules (e.g. set `leavesCount = 0` on a test
@@ -134,7 +133,7 @@ Revert-Mod -Name "bag-capacity"     # restores byte-identical original + unregis
 
 | Mod | What it changes | Bundle(s) | Field(s) |
 |---|---|---|---|
-| `bag-capacity/` ✅ **(shipped, M6 + config M7 + in-game editor M8)** | Bigger leaf bags — configurable (multiplier or per-bag), editable in-game with F8 | `coreassets_assets_meta_*` | `capacity` on 4 MonoBehaviours (Small=50, Med=200, Big=500, Giant=800) |
+| `bag-capacity/` ✅ **(shipped, M6 + config M7 + launcher L2)** | Bigger leaf bags — configurable (multiplier or per-bag), editable in the launcher | `coreassets_assets_meta_*` | `capacity` on 4 MonoBehaviours (Small=50, Med=200, Big=500, Giant=800) |
 | `bag-speed/` | Faster seal & empty | `coreassets_assets_actors_*` | `sealingTime`, `emptyingDuration` on each `*LeafBag` |
 | `more-leaves/` | Denser levels | `coreassets_assets_areas*` | `leavesCount` per area |
 | `instant-seal/` | QoL: no seal delay | same as `bag-speed/` | set `sealingTime = 0.0` |

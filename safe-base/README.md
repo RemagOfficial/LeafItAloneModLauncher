@@ -45,11 +45,11 @@ Install this **before** any mod in `../content-mods/`.
 .\safe-base\uninstall.ps1
 ```
 
-After you've rebuilt the overlay (a new banner, the M8 F8 bag-editor, ...) you
+After you've rebuilt the overlay (a new banner, an added `[safebase]` key, ...) you
 don't need to uninstall/reinstall the whole safety framework just to swap the one
 `version.dll` in the game folder. `install.ps1` refuses a double install on
 purpose, so use the refresh tool instead — it re-drops the built `version.dll`,
-regenerates `LeafOverlay.ini` (so new `[bageditor]` etc. sections appear), and
+regenerates `LeafOverlay.ini` (so new sections appear), and
 updates the manifest SHA, **touching no firewall/proxy/save state**:
 
 ```powershell

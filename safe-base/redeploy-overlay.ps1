@@ -14,7 +14,7 @@
 #      overlay\version.dll (the pristine original is already in the M4 backup, so
 #      this does NOT re-back-up - it just updates our own deployed file).
 #   4. Regenerate <game>\LeafOverlay.ini from the current template, so new
-#      sections (e.g. [bageditor]) show up on already-installed games. Any hand
+#      keys/sections show up on already-installed games. Any hand
 #      edits you made to that ini are replaced; the previous copy is parked next
 #      to it as LeafOverlay.ini.bak-<timestamp>.
 #   5. Refresh the manifest's overlay SHA/size so uninstall/status stay accurate.

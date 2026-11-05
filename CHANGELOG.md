@@ -326,6 +326,15 @@ release notes inside its README.
   successes green, warnings amber, everything else neutral, matched in priority order so a failing run
   never reads green); `Views/LogLineBrushConverter.cs` maps it to a brush on the log's item template.
   The log stays a flat list of strings — nothing else changes. 83 headless checks pass.
+- **`overlay/` + `safe-base/` + `content-mods/` L6 — retire the in-game bag editor.** The
+  launcher (L2) now owns bag-size config, so the M8 F8 overlay panel is dead weight. Removed
+  from `leaf_overlay.cpp`: the editor globals, the `[bageditor]` ini parse, every `Be*` helper
+  (`BeCfgPath`/`BeFindInt`/`BeFindString`/`BeClamp`/`BeLoadConfig`/`BeSaveConfig`/`BeSpawnHelper`)
+  and `PaintBagEditor`, plus the `WM_TIMER` key-poll and the `PaintOverlay` draw — the safe-base
+  **banner and one-shot preflight are untouched**. Dropped `[bageditor]` from `common.ps1`
+  `Format-SafeBaseOverlayIni` and `overlay/LeafOverlay.ini`; deleted the orphaned
+  `content-mods/bag-capacity/apply-on-exit.ps1` and the `_applyHelper` path injection in
+  `apply.ps1` (nothing launches the waiter any more). Rebuilt `version.dll` (MSVC, clean).
 
 ## 1.0.0
 Initial release: the `overlay/` example.
