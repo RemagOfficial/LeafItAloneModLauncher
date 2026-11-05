@@ -133,6 +133,13 @@ release notes inside its README.
   disabled) is unchanged. `overlay/version.dll` rebuilt at the same size
   (188 416 bytes), new SHA-256
   `D3D735154DE13FF709C0158969C89CB1225A801E09D76F4A6303102EEFC708C1`.
+  Follow-up: the plain text showed pink/purple halos around glyph edges —
+  ClearType antialiasing blends against the magenta color-key, and those
+  intermediate pixels aren't the key so they become opaque. The banner now
+  uses a dedicated **NONANTIALIASED** Segoe UI -22 font (exact-colour
+  pixels, clean with the 8px black outline). HUD panel fonts unchanged.
+  Rebuilt: 188 416 bytes, SHA-256
+  `8342659AF2385F4E4CF8BBF813B8DF99BE3F5E6FDB8525F2B1C21D32964CD972`.
 - First content mod planned: `content-mods/bag-capacity/` (M6).
 
 ## 1.0.0

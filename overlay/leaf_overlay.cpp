@@ -52,6 +52,7 @@ static const wchar_t* kOverlayClass = L"LeafItAloneOverlayWnd";
 static HWND    g_hwnd = nullptr;      // our overlay window
 static HFONT   g_font = nullptr;
 static HFONT   g_fontSmall = nullptr;
+static HFONT   g_fontBanner = nullptr;  // NONANTIALIASED - see banner notes
 
 // HUD state
 static bool      g_visible = true;
@@ -535,8 +536,18 @@ static void PaintOverlay(HWND h) {
     // Minimal mode: no rounded rect, no border. Text only, with a 1px black
     // outline so it stays readable over bright or busy scenes without adding
     // a distracting backdrop.
+    //
+    // IMPORTANT: this uses a NONANTIALIASED font on purpose. The overlay
+    // window is transparent via SetLayeredWindowAttributes COLORKEY on
+    // magenta RGB(255,0,255). GDI blends antialiased/ClearType glyph edges
+    // against whatever is in the DC - which is that magenta key - and the
+    // resulting intermediate pixels are NOT the key colour, so they render
+    // as opaque pink/purple (and ClearType adds red/blue subpixel fringing).
+    // Inside the old opaque panel this was invisible; over plain game it
+    // shows as coloured halos. Non-antialiased pixels are exact colours, so
+    // text + 8-way outline composite cleanly with zero fringing.
     if (g_safebase && g_sbBanner) {
-        SelectObject(dc, g_fontSmall);
+        SelectObject(dc, g_fontBanner);
         const wchar_t* txt = g_sbOk ? g_sbBannerText : g_sbFailSummary[0] ? g_sbFailSummary : g_sbBannerText;
         SIZE bs{}; GetTextExtentPoint32W(dc, txt, (int)wcslen(txt), &bs);
         int bpx, bpy;
@@ -755,6 +766,13 @@ static DWORD WINAPI OverlayThread(LPVOID) {
     g_fontSmall = CreateFontW(-22, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                          DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                          CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+    // Banner font: same size as the small font but NONANTIALIASED. The
+    // color-key transparency cannot carry blended edge pixels (they pick up
+    // the magenta key as a coloured halo), so the plain-text safe-base
+    // banner must be drawn with exact-colour pixels only.
+    g_fontBanner = CreateFontW(-22, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                         NONANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe UI");
 
     RECT r; GetWindowRect(game, &r);
     g_hwnd = CreateWindowExW(
