@@ -18,7 +18,10 @@
     <!-- No external NuGet packages: System.Text.Json ships with the framework,
          so the project restores/builds fully offline. -->
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
-    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- NOTE: do NOT set InvariantGlobalization here. WPF bindings call
+         XmlLanguage.GetSpecificCulture(), which throws
+         "Cannot find non-neutral culture related to 'en-us'" under the
+         invariant globalization mode (no ICU culture data). -->
     <!-- Deterministic, self-contained single-file friendly defaults. -->
     <AppendTargetFrameworkToOutputPath>true</AppendTargetFrameworkToOutputPath>
     <EnableDefaultApplicationDefinition>true</EnableDefaultApplicationDefinition>
