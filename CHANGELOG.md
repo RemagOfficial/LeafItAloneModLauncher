@@ -17,6 +17,13 @@ release notes inside its README.
   `%LOCALAPPDATA%\LeafItAloneSafe\manifest.json`. Read-only `status.ps1`
   needs no admin. `uninstall.ps1` already refuses to run while content mods
   are registered (that check fires from M5 when the registry fills up).
+- **`safe-base/` M1 tested (2026-11-05)**. Install / status / wf.msc / uninstall
+  pass. Observed: in-game leaderboard still browsable while M1 is active. That
+  is expected — the traffic is served from `Steam.exe`, a different process our
+  exe-scoped rule doesn't match, over loopback IPC the firewall doesn't filter.
+  Consequence documented in a new "Leak paths" table in `safe-base/README.md`:
+  **M1 alone does not stop Steamworks-based score submissions.** M2
+  (`steam_api64.dll` proxy) is what actually closes that leak.
 - First content mod planned: `content-mods/bag-capacity/` (M6).
 
 ## 1.0.0
