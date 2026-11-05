@@ -24,6 +24,25 @@ release notes inside its README.
   Consequence documented in a new "Leak paths" table in `safe-base/README.md`:
   **M1 alone does not stop Steamworks-based score submissions.** M2
   (`steam_api64.dll` proxy) is what actually closes that leak.
+- **`safe-base/` M2 landed**: `steam_api64.dll` stub proxy under
+  `safe-base/steam_proxy/`. Auto-generated from the game's real DLL exports
+  (1089 names captured with `dumpbin /exports` → `exports.txt` →
+  `generate_proxy.ps1` → `steam_proxy.{cpp,def}` → MSVC build → `steam_api64.dll`,
+  162 KB). Every function returns `0` (`bool=false`, `HSteamPipe=0`, `NULL`);
+  `g_pSteamClientGameServer` is a null-pointer data export to match the real
+  DLL's data symbol. `install.ps1` finds the game's real DLL, moves it to
+  `%LOCALAPPDATA%\LeafItAloneSafe\backup\steam_api64.dll`, drops the proxy in
+  place, and verifies the current file classifies as `proxy`. `uninstall.ps1`
+  restores the real DLL FIRST and removes the firewall rule LAST. `status.ps1`
+  reports the current DLL class (`proxy` / `real` / `absent` / `unknown`) +
+  backup integrity. Manifest `schemaVersion` bumped to 2, `steamProxy` block
+  filled with both SHAs and sizes. Rollback: if M2 fails after M1 succeeded,
+  install removes the firewall rule so state stays coherent. Skip Steam
+  entirely with `-SkipSteam` for M1-only testing. **Combined effect: M1 closes
+  the game's own HTTP path (UnityWebRequest); M2 closes every Steamworks
+  path (leaderboard upload, achievements, stats, cloud saves) because the game
+  never obtains an `ISteamUserStats`. Remaining leaks (M3-M4) are pre-existing
+  Steam-side queue and mid-session rule tampering.**
 - First content mod planned: `content-mods/bag-capacity/` (M6).
 
 ## 1.0.0

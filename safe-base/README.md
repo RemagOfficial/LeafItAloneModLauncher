@@ -1,28 +1,34 @@
 # `safe-base/` — Offline-safety framework
 
-**Status: M1 landed — a real Windows Firewall outbound-block with verification
-is implemented and testable.** M2-M6 (Steam proxy, save isolation, DLL
-trip-wire, PS SDK, first content mod) are still planned; roadmap at the bottom.
+**Status: M1 + M2 landed — a verified Windows Firewall outbound-block AND a
+`steam_api64.dll` stub proxy that makes `SteamAPI_Init` fail.** Together these
+close every upload path the game process can initiate. M3-M6 (save isolation,
+DLL trip-wire, PS SDK, first content mod) are still planned; roadmap at the
+bottom.
 
 Install this **before** any mod in `../content-mods/`.
 
-## Quick start (M1)
+## Quick start (M1 + M2)
 
 ```powershell
-# Adds a Windows Firewall OUTBOUND-BLOCK rule for Leaf it Alone.exe.
-# Self-elevates via UAC; asks for confirmation ("YES") first.
+# Adds a Windows Firewall OUTBOUND-BLOCK rule for Leaf it Alone.exe, then
+# replaces steam_api64.dll with a stub proxy (real one backed up). Self-
+# elevates via UAC; asks for confirmation ("YES") first.
 .\safe-base\install.ps1
 
-# Read-only report: rule, program, profile, Firewall service, manifest.
+# Read-only report: rule, program, profile, Firewall service, Steam proxy
+# state (proxy in place? real restored? backup present?), manifest, mods.
 .\safe-base\status.ps1
 
-# Removes the rule + manifest. Refuses to touch anything if content mods are
-# still registered with the base (that check kicks in from M5).
+# Restores the real steam_api64.dll first, then removes the firewall rule
+# LAST (so the network stays blocked until file state is vanilla again).
 .\safe-base\uninstall.ps1
 ```
 
 Override the auto-detected game path with
 `.\safe-base\install.ps1 -GameExe "D:\some\other\Leaf it Alone.exe"`.
+Skip the Steam proxy step (M1 only, useful for testing the rule in isolation)
+with `.\safe-base\install.ps1 -SkipSteam`.
 
 ## Why "just block the network" isn't enough
 
@@ -42,8 +48,8 @@ days later**. Blocking alone isn't a guarantee.
 
 ## What `safe-base/` does
 
-*(Below is the full framework design. **M1 = step 1 only.** The other
-steps arrive as M2-M5 land; each milestone is independently testable.)*
+*(Below is the full framework design. **M1 + M2 = steps 1 and 2.** The other
+steps arrive as M3-M5 land; each milestone is independently testable.)*
 
 On install, `install.ps1` (self-elevating):
 
@@ -57,9 +63,16 @@ On install, `install.ps1` (self-elevating):
      can't perform (firewall rules only affect the target program's traffic)
      ships at **M4** inside the `version.dll` mod, where the probe runs
      *from the game process itself*.
-2. Drops a `steam_api64.dll` proxy into the game folder that makes
-   `SteamAPI_Init` fail. The game thinks Steam isn't running, so no
-   achievements or Steam leaderboards record anything, ever, while modded.
+2. **[M2 landed]** Locates the game's real `steam_api64.dll`, moves it to
+   `%LOCALAPPDATA%\LeafItAloneSafe\backup\steam_api64.dll`, and drops the
+   auto-generated **stub proxy** from `steam_proxy/` in its place. Every
+   Steam export returns `0` / `nullptr`, so `SteamAPI_InitFlat` (which
+   `SteamAPI_Init()` wraps inline in the modern Steamworks SDK) returns
+   false. Steamworks.NET never gets an `ISteamUserStats`, and the game has
+   no way to call `UploadLeaderboardScore`, `SetStat`, `SetAchievement`, or
+   touch Steam Cloud. If M2 fails after M1 succeeded, install rolls back
+   the firewall rule so state stays coherent.
+   - Override with `-SkipSteam` if you only want M1 for testing.
 3. **Isolates the save**: moves the real `UserData/` and any
    `AppData\LocalLow\*\Leaf it Alone*` to a timestamped backup, then creates a
    fresh empty `UserData/`. Modded play can't touch the user's actual
@@ -108,10 +121,13 @@ need to duplicate any safety code.
 
 | Command | Status | What it does |
 |---|---|---|
-| `install.ps1` | **M1 landed** | Add firewall rule + verify. Self-elevates. |
-| `uninstall.ps1` | **M1 landed** | Remove firewall rule + manifest. Refuses if content mods are still applied (guard is live but registry fills up in M5). |
-| `status.ps1` | **M1 landed** | Read-only: rule present, service running, manifest, registered mods. No admin required. |
-| `common.ps1` | shared | Dot-sourced helpers: `Find-GameExe`, `Test-IsAdmin`, `Get-FirewallState`. Constants: rule name, display, description, state dir, manifest path. |
+| `install.ps1` | **M1 + M2 landed** | Firewall rule + Steam proxy + verify + manifest. Self-elevates. Rolls back M1 if M2 fails. |
+| `uninstall.ps1` | **M1 + M2 landed** | Restores the real `steam_api64.dll` from backup first, then removes the firewall rule LAST. Refuses if content mods are still applied (guard is live; registry fills up in M5). |
+| `status.ps1` | **M1 + M2 landed** | Read-only: rule present + service running + Steam-proxy state (proxy / real / absent / unknown) + backup integrity + manifest + registered mods. No admin. |
+| `common.ps1` | shared | Dot-sourced helpers: `Find-GameExe`, `Test-IsAdmin`, `Get-FirewallState`, `Find-GameSteamDll`, `Install-SteamProxy`, `Restore-SteamProxy`, `Classify-SteamDll`, `Get-FileSha256`. Constants: rule name, display, description, state dir, manifest path, backup dir, `SteamProxySource`. |
+| `steam_proxy/generate_proxy.ps1` | **M2 landed** | Regenerates `steam_proxy.cpp` + `steam_proxy.def` from `exports.txt`. Deterministic; only rerun if the game's SDK changes its export set. |
+| `steam_proxy/build_steam_proxy.ps1` | **M2 landed** | Compiles `steam_proxy.cpp` → `steam_api64.dll` (162 KB stub proxy). Ships prebuilt so end users don't need MSVC. |
+| `steam_proxy/exports.txt` | M2 source of truth | 1089 export names captured from the game's current `steam_api64.dll`. |
 | `uninstall-all.ps1` | M5 | Revert every registered content mod, then uninstall. |
 | `recheck.ps1` | M4 | Re-run the precondition probe from inside the game process. |
 | `base.psm1` | M5 | SDK content mods import. |
@@ -141,8 +157,29 @@ Delivered one milestone at a time, each independently testable before the next.
        That's expected at M1; **M2** closes it.
   5. `uninstall.ps1` -> confirm -> rule gone, `status.ps1` shows "not
      installed".
-- **M2** — `steam_api64.dll` proxy. Verify in-game that Steam integration
-  fails gracefully but the game still launches and plays.
+- **M2 - LANDED** — `steam_api64.dll` stub proxy. `install.ps1` finds the
+  game's real `steam_api64.dll`, moves it to `%LOCALAPPDATA%\LeafItAloneSafe\
+  backup\steam_api64.dll`, drops the prebuilt proxy at the same path, and
+  verifies with hash match + size classification. `uninstall.ps1` restores
+  the real DLL first (refusing if what's there now isn't our proxy — so we
+  never clobber a manual restore). `status.ps1` shows the current DLL class.
+  Test plan:
+  1. `install.ps1` -> confirm plan, approve UAC -> should print `[M2] proxy
+     active` and record `steamProxy` block in the manifest.
+  2. `status.ps1` -> `[M2] Steam proxy layer: current DLL: PROXY`, `backup
+     present: yes`, and verdict `M1 + M2 active`.
+  3. Check the file at the game's `Plugins/x86_64/steam_api64.dll`: ~162 KB,
+     SHA matches the repo's `steam_proxy/steam_api64.dll`.
+  4. Launch the game. If it starts and plays normally (no "Steam required"
+     error, no crash), M2 works. In-game: Steam friends list, Steam
+     achievements screen, in-game Steam leaderboard view — expect them to
+     show as unavailable or empty, not to load. **If the game hard-refuses
+     to launch without Steam**, we need a compat-mode variant that lets
+     init succeed but stubs `UploadLeaderboardScore`/`SetStat` specifically.
+  5. `uninstall.ps1` -> should print `[M2] Restoring real steam_api64.dll...`,
+     then `[M1] Removing firewall rule...`, then the manifest. Verify the
+     DLL size at the game's path is back to ~320 KB and its SHA matches the
+     backup the manifest recorded.
 - **M3** — Save isolation in install/uninstall, with a real rollback test.
 - **M4** — `version.dll` with preconditions + banner + the live
   `connect(1.1.1.1:443)` outbound probe (only meaningful from the game's own
@@ -151,41 +188,45 @@ Delivered one milestone at a time, each independently testable before the next.
 - **M5** — `base.psm1` SDK + registry + `uninstall-all.ps1` + `recheck.ps1`.
 - **M6** — First content mod (`bag-capacity`) as the SDK's real test.
 
-## Leak paths — what M1 blocks vs what's left
+## Leak paths — what M1 + M2 block vs what's left
 
 Leaf it Alone ships both `com.rlabrecque.steamworks.net.dll` (Steamworks) and
-`UnityWebRequestModule.dll` (the game's own HTTP client). That means there are
-**two distinct upload paths** and they need **different** mitigations.
+`UnityWebRequestModule.dll` (the game's own HTTP client). Two upload paths,
+two mitigations.
 
-| Leak path | How it works | Blocked by M1? | Milestone that closes it |
-|---|---|---|---|
-| Game → its own web service (HTTPS via `UnityWebRequest`) | `Leaf it Alone.exe` opens a direct TCP+TLS connection to a dev-hosted endpoint | ✅ **Yes** — outbound SYN blocked, connection never establishes | M1 |
-| Game → Steam leaderboard upload (`ISteamUserStats::UploadLeaderboardScore`) | Game calls the API in `steam_api64.dll`; that call goes over **loopback IPC** into `Steam.exe`; Steam.exe makes the actual HTTPS call to `steampowered.com` | ❌ **No** — loopback isn't filtered by an exe-scoped rule, and the SYN comes from `Steam.exe`, not `Leaf it Alone.exe` | **M2** (`steam_api64.dll` proxy makes `SteamAPI_Init` fail; game never even gets to call upload) |
-| Game → Steam stats / achievements (`SetStat`, `SetAchievement`) | Same Steamworks IPC as above; Steam client queues + syncs | ❌ **No** | M2 |
-| Steam Cloud save sync | Steam pushes / pulls `UserData/` files on its own schedule | ❌ **No** | M3 (save isolation) + M2 (never enter the online state that queues a sync) |
-| Real save replayed on the next online launch (queued or embedded submissions) | Uninstall firewall → play vanilla → the game (or Steam) resubmits anything the save says it should | ❌ **No** | M3 (modded `UserData/` is **discarded**, vanilla restored) |
-| Rule silently removed while game is running (VPN client resets firewall, group policy, malware, user tinkering) | Game keeps playing but the block is gone | ❌ No — no trip-wire yet | M4 (in-DLL precondition re-check every ~30 s + live `connect()` probe + trip-wire banner) |
+| Leak path | How it works | M1 (firewall) | M2 (proxy) | What closes it |
+|---|---|---|---|---|
+| Game → its own web service (HTTPS via `UnityWebRequest`) | `Leaf it Alone.exe` opens a direct TCP+TLS connection to a dev-hosted endpoint | ✅ blocked (SYN dies) | n/a | **M1** |
+| Game → Steam leaderboard upload (`UploadLeaderboardScore`) | Game calls `steam_api64.dll` → loopback IPC → `Steam.exe` → HTTPS | ❌ (Steam's exe isn't the rule target; loopback unfiltered) | ✅ blocked (`SteamAPI_Init` returns false, game never gets the interface) | **M2** |
+| Game → Steam stats / achievements (`SetStat`, `SetAchievement`) | Same as above | ❌ | ✅ blocked | **M2** |
+| Steam Cloud save sync | Steam client pushes/pulls `UserData/` on its own schedule | ❌ | ✅ indirectly (init-fail means game never enters cloud-enabled state) | **M2** |
+| Save file re-upload on next online launch (queued or embedded submissions) | Uninstall → play vanilla → the game (or Steam) resubmits what's in the save | ❌ | ❌ (proxy's gone after uninstall) | **M3** (modded `UserData/` discarded on uninstall, vanilla restored) |
+| Rule silently removed while game is running (VPN resets firewall, group policy, malware, user tinkering) | Game keeps playing but block is gone | ❌ (no trip-wire yet) | ❌ (DLL file is still our proxy, so Steam uploads still blocked, but web-service path is open) | **M4** (in-DLL precondition re-check every ~30 s + live `connect()` probe + trip-wire banner) |
 
-**The takeaway:** M1 is necessary and it does real work, but **on its own it
-is not a guarantee.** A game that uses Steamworks for its leaderboards can
-still upload modded scores *through the Steam client's own process*, which is
-outside our exe-scoped firewall rule's reach. That's why `safe-base` needs
-M2 + M3 before any content mod should be considered safe to distribute.
+**The takeaway after M2:** every network call the *game process* can initiate
+is stopped, either at the firewall (web-service path) or at the DLL boundary
+(Steamworks path). The remaining leaks are:
+- Anything already **queued inside `Steam.exe`** before safe-base was installed
+  — closes when we ship **M3** and the modded save is thrown away on uninstall.
+- Anything the game **writes to its own save** that could re-trigger an
+  upload later — same fix, M3.
+- Silent removal of the firewall rule (or the proxy DLL) **during a session** —
+  M4's version.dll trip-wire.
 
-## What M1 does **not** do yet
+## What M1 + M2 don't do yet
 
-- Blocks the game's own **direct** outbound traffic — ✅ **yes** (M1's job).
-- Blocks anything routed through the **Steam client's** process — ❌ **no**,
-  that's M2's `steam_api64.dll` proxy.
-- Moves or backs up the save — ❌ **no**, M3.
-- Detects the firewall rule being removed mid-session — ❌ **no**, M4.
+- Detect the firewall rule being removed mid-session — ❌ **no**, M4.
+- Detect the proxy DLL being replaced with the real one mid-session — ❌ **no**, M4.
+- Move or back up the save — ❌ **no**, M3.
 - The `base.psm1` SDK content mods use — ❌ **no**, M5.
 
-Until M5, no content mod is safe to install on top of just M1.
+Until M5 lands, no content mod is safe to distribute. But M1 + M2 together
+mean the *safety story is real* for a user who manually applies a bundle edit
+in their own install for personal play.
 Use `../overlay/` in the meantime (cosmetic only, does not touch gameplay,
 and therefore does not need the safety framework).
 
-## Requirements (for M1)
+## Requirements (for M1 + M2)
 - Windows x64, *Leaf it Alone* on Steam (you must own the game).
 - Admin PowerShell for the firewall rule (self-elevates via `Start-Process -Verb RunAs`).
 - Later milestones add: the game in **borderless / windowed** mode (M4
