@@ -23,6 +23,9 @@ public sealed class MainViewModel : ObservableObject
     private readonly ModDiscovery _discovery = new();
     private readonly ProcessRunner _runner = new();
     private readonly ApplyOrchestrator _ops;
+    private SafeBaseService? _safeBase;
+    private SafeBaseInfo _safeBaseInfo = SafeBaseInfo.NotInstalled;
+    private string _safeBaseVerdict = "";
     private LauncherState _state = new();
     private string _statePath = "";
 
@@ -36,6 +39,9 @@ public sealed class MainViewModel : ObservableObject
         RevertCommand = new RelayCommand(async _ => await RevertSelectedAsync(), _ => CanRevert);
         ApplyAndLaunchCommand = new RelayCommand(async _ => await ApplyAndLaunchAsync(), _ => !IsBusy && Editors.Count > 0);
         LaunchCommand = new RelayCommand(_ => LaunchGame(), _ => !IsBusy);
+        InstallSafeBaseCommand = new RelayCommand(async _ => await InstallSafeBaseAsync(), _ => CanInstallSafeBase);
+        UninstallAllCommand = new RelayCommand(async _ => await UninstallAllAsync(), _ => CanUninstallAll);
+        RefreshStatusCommand = new RelayCommand(async _ => await RefreshStatusAsync(), _ => !IsBusy && _safeBase is not null);
 
         _runner.LineReceived += AppendLog;   // fires on a worker thread; marshalled in AppendLog
 
@@ -68,6 +74,29 @@ public sealed class MainViewModel : ObservableObject
         ? "no changes to apply - Launch starts the game as-is"
         : $"{PendingCount} mod(s) pending - Apply & Launch pushes them, then starts the game";
 
+    // ---- L5: safe-base lifecycle ----
+
+    /// <summary>True once the safe-base manifest exists (its install marker).</summary>
+    public bool SafeBaseInstalled => _safeBaseInfo.Installed;
+
+    /// <summary>True when nothing is installed yet - the Dashboard's first-run prompt.</summary>
+    public bool FirstRunNeeded => !_safeBaseInfo.Installed;
+
+    /// <summary>What the Dashboard shows about the framework's install state.</summary>
+    public string SafeBaseSummary => _safeBaseInfo.Installed
+        ? $"Installed ({_safeBaseInfo.Milestone}) - game: {ShortExe(_safeBaseInfo.GameExe)}"
+        : "Not installed - the safe-base must be installed before mods can apply.";
+
+    /// <summary>The one-line VERDICT from the last full status run (empty until you run it).</summary>
+    public string SafeBaseVerdict
+    {
+        get => _safeBaseVerdict;
+        private set => Set(ref _safeBaseVerdict, value);
+    }
+
+    private static string ShortExe(string? exe) =>
+        string.IsNullOrWhiteSpace(exe) ? "(unknown)" : System.IO.Path.GetFileName(exe!);
+
     private bool _isBusy;
     public bool IsBusy
     {
@@ -80,6 +109,9 @@ public sealed class MainViewModel : ObservableObject
                 DemoRunnerCommand.RefreshCanExecute();
                 ApplyAndLaunchCommand.RefreshCanExecute();
                 LaunchCommand.RefreshCanExecute();
+                InstallSafeBaseCommand.RefreshCanExecute();
+                UninstallAllCommand.RefreshCanExecute();
+                RefreshStatusCommand.RefreshCanExecute();
                 RefreshCommands();
             }
         }
@@ -91,11 +123,19 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand RevertCommand { get; }
     public RelayCommand ApplyAndLaunchCommand { get; }
     public RelayCommand LaunchCommand { get; }
+    public RelayCommand InstallSafeBaseCommand { get; }
+    public RelayCommand UninstallAllCommand { get; }
+    public RelayCommand RefreshStatusCommand { get; }
 
     // Apply is offered when the selection has something to push to the game; Revert
     // only when it is currently applied. All gated on not being mid-operation.
     private bool CanApply => !IsBusy && SelectedEditor is { IsPending: true };
     private bool CanRevert => !IsBusy && SelectedEditor is { IsApplied: true };
+
+    // Install only when the base is absent; Uninstall only when present; both need the
+    // engine folder resolved and the game closed (the scripts also enforce these).
+    private bool CanInstallSafeBase => !IsBusy && _safeBase is not null && !_safeBaseInfo.Installed;
+    private bool CanUninstallAll => !IsBusy && _safeBase is not null && _safeBaseInfo.Installed;
 
     private void RefreshCommands()
     {
@@ -103,6 +143,9 @@ public sealed class MainViewModel : ObservableObject
         RevertCommand.RefreshCanExecute();
         ApplyAndLaunchCommand.RefreshCanExecute();
         LaunchCommand.RefreshCanExecute();
+        InstallSafeBaseCommand.RefreshCanExecute();
+        UninstallAllCommand.RefreshCanExecute();
+        RefreshStatusCommand.RefreshCanExecute();
     }
 
 
@@ -114,6 +157,9 @@ public sealed class MainViewModel : ObservableObject
         {
             Editors.Clear();
             RootPath = "";
+            _safeBase = null;
+            _safeBaseInfo = SafeBaseInfo.NotInstalled;
+            RaiseSafeBaseProps();
             StatusText = "Content root not found.";
             Log(_locator.LastError ?? "unknown locator error");
             return;
@@ -122,6 +168,10 @@ public sealed class MainViewModel : ObservableObject
         RootPath = _locator.Root!;
         _statePath = LauncherState.DefaultPath();
         _state = LauncherState.Load(_statePath);
+
+        // The engine folder (safe-base/ or tools/) holds install/status/uninstall-all.
+        _safeBase = new SafeBaseService(_runner, _locator.SafeBaseDir);
+        RefreshSafeBaseState();
 
         var result = _discovery.Discover(_locator.ModsRoot!);
         foreach (var err in result.Errors) Log("[manifest error] " + err);
@@ -315,6 +365,103 @@ public sealed class MainViewModel : ObservableObject
         Log("[launch] " + message);
     }
 
+
+    // ---- L5: safe-base lifecycle flows ----
+
+    /// <summary>Install the safe-base (self-elevates). Blocks if the game is running.</summary>
+    private async System.Threading.Tasks.Task InstallSafeBaseAsync()
+    {
+        if (_safeBase is null) { StatusText = "Engine folder not found - cannot install."; return; }
+        if (_safeBaseInfo.Installed) { StatusText = "safe-base is already installed."; RefreshSafeBaseState(); return; }
+        if (ApplyOrchestrator.IsGameRunning())
+        {
+            StatusText = "Close the game before installing safe-base.";
+            Log("[install blocked] Leaf it Alone is running - close it first");
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            Log("--- install safe-base (a UAC prompt will appear) ---");
+            var res = await _safeBase.InstallAsync();
+            if (res.Success) { Log("--- install OK ---"); StatusText = "safe-base installed."; }
+            else Log(res.TimedOut ? "--- install TIMEOUT ---" : $"--- install FAILED (exit {res.ExitCode}) ---");
+        }
+        finally { IsBusy = false; RefreshSafeBaseState(); }
+    }
+
+    /// <summary>Revert every registered mod, then uninstall the safe-base (self-elevates).</summary>
+    private async System.Threading.Tasks.Task UninstallAllAsync()
+    {
+        if (_safeBase is null) { StatusText = "Engine folder not found - cannot uninstall."; return; }
+        if (!_safeBaseInfo.Installed) { StatusText = "safe-base is not installed."; RefreshSafeBaseState(); return; }
+        if (ApplyOrchestrator.IsGameRunning())
+        {
+            StatusText = "Close the game before uninstalling safe-base.";
+            Log("[uninstall blocked] Leaf it Alone is running - close it first");
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            Log("--- uninstall-all: revert mods, remove safe-base (a UAC prompt will appear) ---");
+            var res = await _safeBase.UninstallAllAsync();
+            if (res.Success)
+            {
+                Log("--- uninstall-all OK ---");
+                StatusText = "safe-base removed; all mods reverted.";
+                ClearAllApplied();   // the base is gone - nothing stays "applied" in our state
+            }
+            else Log(res.TimedOut ? "--- uninstall TIMEOUT ---" : $"--- uninstall FAILED (exit {res.ExitCode}) ---");
+        }
+        finally { IsBusy = false; Rescan(); }   // rebuild editors + safe-base state from disk
+    }
+
+    /// <summary>Run status.ps1 for the authoritative health verdict (streams full report to the log).</summary>
+    private async System.Threading.Tasks.Task RefreshStatusAsync()
+    {
+        if (_safeBase is null) return;
+        IsBusy = true;
+        try
+        {
+            Log("--- safe-base status ---");
+            var (res, verdict) = await _safeBase.RunStatusAsync();
+            SafeBaseVerdict = verdict ?? "(no verdict line found)";
+            StatusText = res.Success ? "status refreshed" : $"status run exited {res.ExitCode}";
+            Log("--- status end ---");
+        }
+        finally { IsBusy = false; RefreshSafeBaseState(); }
+    }
+
+    /// <summary>Re-read the install manifest and notify the Dashboard bindings.</summary>
+    private void RefreshSafeBaseState()
+    {
+        _safeBaseInfo = _safeBase is null ? SafeBaseInfo.NotInstalled : _safeBase.Read();
+        RaiseSafeBaseProps();
+    }
+
+    private void RaiseSafeBaseProps()
+    {
+        OnPropertyChanged(nameof(SafeBaseInstalled));
+        OnPropertyChanged(nameof(FirstRunNeeded));
+        OnPropertyChanged(nameof(SafeBaseSummary));
+        InstallSafeBaseCommand.RefreshCanExecute();
+        UninstallAllCommand.RefreshCanExecute();
+        RefreshStatusCommand.RefreshCanExecute();
+    }
+
+    /// <summary>Drop every mod's applied marker (used after the whole base is uninstalled).</summary>
+    private void ClearAllApplied()
+    {
+        foreach (var st in _state.Mods.Values)
+        {
+            st.LastAppliedConfigSha = "";
+            st.AppliedVersion = "";
+        }
+        TrySaveState();
+    }
 
     private string PythonOrDefault() => string.IsNullOrEmpty(_ops.PythonPath) ? "apply.ps1 default" : _ops.PythonPath!;
 

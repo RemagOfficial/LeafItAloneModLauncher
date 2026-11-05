@@ -19,7 +19,7 @@ internal static class Program
 
     private static int Main()
     {
-        Console.WriteLine("Launcher L1/L2/L3/L4 headless checks");
+        Console.WriteLine("Launcher L1/L2/L3/L4/L5 headless checks");
         Console.WriteLine("================================");
 
         CheckRepoAndDiscovery();
@@ -30,6 +30,7 @@ internal static class Program
         CheckOrchestratorArgs();
         CheckSequencePlan();
         CheckGameExeResolution();
+        CheckSafeBaseLifecycle();
         ProcessRunnerCheck().GetAwaiter().GetResult();
         OrchestratorRunCheck().GetAwaiter().GetResult();
 
@@ -388,6 +389,64 @@ internal static class Program
 
             Assert(GameLauncher.ResolveGameExeFrom(Path.Combine(dir, "absent.json")) is null,
                 "missing manifest file -> null");
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    /// <summary>
+    /// L5 safe-base lifecycle: the manifest parse that drives the Dashboard (no subprocess)
+    /// plus a real <c>status.ps1</c> run through the runner. The status run also proves that
+    /// <c>Write-Host</c> output reaches our redirected stdout (status.ps1 prints its VERDICT
+    /// with Write-Host, not Write-Output) and that the VERDICT line is extracted for the panel.
+    /// </summary>
+    private static void CheckSafeBaseLifecycle()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "leaf-l5-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            // -- manifest parse (pure) --
+            var manifest = Path.Combine(dir, "manifest.json");
+            File.WriteAllText(manifest, new JsonObject
+            {
+                ["installedAt"] = "2026-11-05T10:00:00",
+                ["milestone"] = "M6",
+                ["gameExe"] = @"B:\SteamLibrary\Leaf it Alone.exe",
+            }.ToJsonString());
+
+            var info = SafeBaseService.ReadFrom(manifest);
+            Assert(info.Installed, "installed manifest -> Installed");
+            Assert(info.Milestone == "M6", "milestone parsed", info.Milestone);
+            Assert(info.GameExe == @"B:\SteamLibrary\Leaf it Alone.exe", "gameExe parsed", info.GameExe ?? "null");
+
+            Assert(!SafeBaseService.ReadFrom(Path.Combine(dir, "absent.json")).Installed,
+                "missing manifest -> NotInstalled");
+            var bad = Path.Combine(dir, "bad.json");
+            File.WriteAllText(bad, "{ not json ");
+            Assert(!SafeBaseService.ReadFrom(bad).Installed, "malformed manifest -> NotInstalled (no throw)");
+
+            // -- verdict extraction (pure) --
+            var sample = new System.Collections.Generic.List<string>
+            {
+                "safe-base status", "=====", "  present : yes",
+                "VERDICT: safe-base M1 + M2 + M3 + M4 active. Game's outbound blocked.",
+            };
+            Assert(SafeBaseService.ExtractVerdict(sample)?.StartsWith("safe-base M1 + M2") == true,
+                "ExtractVerdict pulls the VERDICT text", SafeBaseService.ExtractVerdict(sample) ?? "null");
+            Assert(SafeBaseService.ExtractVerdict(new[] { "no verdict here" }) is null,
+                "ExtractVerdict -> null when absent");
+
+            // -- real status.ps1 run through the runner (proves Write-Host capture) --
+            File.WriteAllText(Path.Combine(dir, "status.ps1"),
+                "$ErrorActionPreference='Stop'\n" +
+                "Write-Host 'safe-base status'\n" +
+                "Write-Host 'VERDICT: safe-base M1 + M2 + M3 + M4 active.'\nexit 0\n");
+
+            var svc = new SafeBaseService(new ProcessRunner(), dir);
+            var (res, verdict) = svc.RunStatusAsync().GetAwaiter().GetResult();
+            Assert(res.Success, "fake status.ps1 exited 0", $"exit {res.ExitCode} fault={res.Fault}");
+            Assert(verdict == "safe-base M1 + M2 + M3 + M4 active.",
+                "VERDICT captured from Write-Host output", verdict ?? "null");
         }
         finally { try { Directory.Delete(dir, true); } catch { } }
     }

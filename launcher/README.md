@@ -15,7 +15,7 @@ unchanged.
 
 ## Status
 
-Milestones **L1–L4** are complete.
+Milestones **L1–L5** are complete.
 
 **L1** — WPF app that builds and runs; the subprocess `ProcessRunner` (PowerShell
 `-File`, `ArgumentList` quoting, streamed Output log, timeout + exit code); mod
@@ -45,8 +45,17 @@ off, skip what's in sync), then starts the game from the path safe-base recorded
 `manifest.json` (`GameLauncher`). Any blocked/failed mod stops the sequence **before**
 launch, so the game never boots half-modded.
 
-Still ahead: the safe-base **lifecycle + first-run wizard** (L5), the overlay slimdown
-(L6), the **bundled Python runtime** (L7) and **distribution polish** (L8).
+**L5** — **safe-base lifecycle + first-run landing**: the Dashboard (now the default
+tab) shows the framework's state from `manifest.json` and drives its install/teardown
+through `SafeBaseService` → the real `install.ps1` / `uninstall-all.ps1` / `status.ps1`
+(subprocess only; self-elevation is handled by the scripts, whose exit code we read).
+**Install safe-base** appears when it is missing (first-run guidance), **Uninstall all**
+when present, and **Run full status** streams the full report and surfaces its
+`VERDICT:` line. Uninstall also clears every mod's applied marker so the badges stay
+honest.
+
+Still ahead: the overlay slimdown (L6), the **bundled Python runtime** (L7) and
+**distribution polish** (L8).
 
 
 ## Layout

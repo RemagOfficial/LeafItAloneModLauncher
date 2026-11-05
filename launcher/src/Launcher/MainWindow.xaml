@@ -34,20 +34,63 @@
             </StackPanel>
         </Border>
 
-        <!-- Default tab is Mods for L2 (the working feature). Revert SelectedIndex
-             to 0 (Dashboard) once L5 builds out the health/lifecycle landing. -->
-        <TabControl Margin="8" SelectedIndex="1">
+        <!-- Dashboard is the landing tab: it now carries the safe-base health/lifecycle
+             (L5) and the Apply & Launch action (L4). -->
+        <TabControl Margin="8" SelectedIndex="0">
             <!-- Dashboard: lifecycle + the big apply/launch button arrive in L3-L5.
                  For L1 it shows wiring and runs the runner self-test. -->
             <TabItem Header="Dashboard">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
                 <StackPanel Margin="16">
                     <TextBlock Text="Welcome" FontSize="20" FontWeight="Bold" />
                     <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Foreground="#444"
-                               Text="This launcher manages Leaf it Alone mods and the safe-base by driving the already-tested PowerShell + UnityPy engines. Install / Repair land in later milestones." />
+                               Text="This launcher manages Leaf it Alone mods and the safe-base by driving the already-tested PowerShell + UnityPy engines." />
+                    <Separator Margin="0,16" />
+
+                    <!-- L5: safe-base lifecycle. Install / Uninstall / status all shell to
+                         the existing safe-base scripts; nothing is reimplemented here. -->
+                    <TextBlock Text="Safe-base" FontSize="16" FontWeight="Bold" />
+                    <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Foreground="#444"
+                               Text="{Binding SafeBaseSummary}" />
+
+                    <!-- first-run guidance when the framework is not installed yet -->
+                    <Border Background="#FFF6E5" BorderBrush="#E6B800" BorderThickness="1" CornerRadius="4"
+                            Padding="10" Margin="0,8,0,0"
+                            Visibility="{Binding FirstRunNeeded, Converter={StaticResource BoolVis}}">
+                        <TextBlock TextWrapping="Wrap" Foreground="#7A5C00"
+                                   Text="Install the safe-base first. It adds the offline firewall block, the Steam stub proxy and save isolation, and deploys the SDK - then mods can be applied. A UAC prompt appears; close the game before installing." />
+                    </Border>
+
+                    <WrapPanel Margin="0,10,0,0">
+                        <Button Content="Install safe-base" Padding="14,6" Margin="0,0,8,0"
+                                Background="{StaticResource AccentBrush}" Foreground="White"
+                                Visibility="{Binding FirstRunNeeded, Converter={StaticResource BoolVis}}"
+                                Command="{Binding InstallSafeBaseCommand}" />
+                        <Button Content="Uninstall all (revert mods + remove safe-base)" Padding="14,6" Margin="0,0,8,0"
+                                Visibility="{Binding SafeBaseInstalled, Converter={StaticResource BoolVis}}"
+                                Command="{Binding UninstallAllCommand}" />
+                        <Button Content="Run full status" Padding="14,6"
+                                Command="{Binding RefreshStatusCommand}" />
+                    </WrapPanel>
+
+                    <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Foreground="#2E7D32"
+                               Text="{Binding SafeBaseVerdict}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SafeBaseVerdict}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
                     <Separator Margin="0,16" />
 
                     <!-- L4: the one action. Reconciles every mod against its enable
                          toggle (apply / revert in manifest order), then starts the game. -->
+                    <TextBlock Text="Play" FontSize="16" FontWeight="Bold" Margin="0,0,0,6" />
                     <TextBlock Text="{Binding ChangeSummary}" TextWrapping="Wrap"
                                Foreground="#444" Margin="0,0,0,8" />
                     <StackPanel Orientation="Horizontal">
@@ -70,6 +113,7 @@
                     <TextBlock Margin="0,10,0,0" Foreground="Gray" TextWrapping="Wrap"
                                Text="'Test output runner' proves the subprocess pipeline by running a harmless PowerShell one-liner - it does not touch the game." />
                 </StackPanel>
+                </ScrollViewer>
             </TabItem>
 
             <!-- Mods: live, schema-driven editor. Each row is generated from the

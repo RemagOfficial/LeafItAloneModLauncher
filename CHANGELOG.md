@@ -303,6 +303,23 @@ release notes inside its README.
   into shared `ApplyOneAsync`/`RevertOneAsync` cores the bulk loop reuses. 61 headless checks
   pass — L4 adds the plan matrix and manifest-parsing edge cases (missing/blank/moved/malformed
   `gameExe`), with no real game touched by the suite.
+- **`launcher/` L5 — safe-base lifecycle + first-run landing.** The Dashboard is now the
+  default tab and shows the framework's install state straight from `manifest.json`
+  (`installedAt`/`milestone`/`gameExe`) via `SafeBaseService.ReadFrom`, then drives the
+  lifecycle as subprocesses only: **Install safe-base** (`install.ps1 -Yes`), **Uninstall all**
+  (`uninstall-all.ps1 -Yes`, reverts every registered mod then removes the base), and **Run full
+  status** (`status.ps1`, read-only). The launcher never reimplements elevation or teardown —
+  `install.ps1`/`uninstall-all.ps1` self-elevate and the non-elevated parent `WaitForExit()`s on
+  the elevated child and re-exits its code, so the parent exit code we read is the real outcome
+  (we pass `-Yes` so nothing blocks on an interactive `Read-Host`). A first-run call-to-action
+  appears when the base is absent; the full status report streams to the log and its trailing
+  `VERDICT:` line is surfaced on the panel (`SafeBaseService.ExtractVerdict`). Install/Uninstall
+  pre-check the game-closed and installed/not conditions for a friendly message (the scripts stay
+  authoritative) and the safe-base is refreshed after every op; uninstall clears each mod's
+  applied marker so badges stay honest. 70 headless checks pass — L5 adds the manifest-parse
+  matrix, verdict extraction, and a **real `status.ps1` run against a fake script in a temp dir**
+  that also proves `Write-Host` output reaches the redirected stdout. No game or real safe-base
+  touched by the suite.
 
 ## 1.0.0
 Initial release: the `overlay/` example.
