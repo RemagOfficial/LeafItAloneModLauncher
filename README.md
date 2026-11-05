@@ -1,17 +1,30 @@
 # Leaf it Alone — Modding
 
 Everything needed to mod *[Leaf it Alone](https://store.steampowered.com/app/3981100/)*
-(Unity 6000.5.6f1, IL2CPP) on Windows: a native overlay example, an offline-safety
-framework that content mods depend on, and the content mods themselves.
+(Unity 6000.5.6f1, IL2CPP) on Windows: a desktop **launcher** that wraps it all in one GUI,
+a native overlay example, an offline-safety framework that content mods depend on, and
+the content mods themselves.
 
 ## Layout
 
 ```
 LeafItAloneModding/
+├── launcher/        One GUI app: manages safe-base + mods + config - the primary way to use this repo
 ├── overlay/         Standalone native-overlay example (a working hello-world)
 ├── safe-base/       Offline-safety framework — required for any content mod
 └── content-mods/    One folder per content mod, each depends on safe-base/
 ```
+
+### `launcher/`
+A **.NET 8 WPF desktop app** and the recommended entry point. It installs/removes the
+safe-base, lists every discovered mod, renders a config editor straight from each mod's
+`mod.json`, and does **Apply & Launch** in one click — orchestrating the same tested
+PowerShell + UnityPy engines as hidden subprocesses (no safety logic is re-implemented in
+C#, so every guarantee below holds unchanged). It needs no .NET install when published
+self-contained and guides you through the one-time Python 3.12 + UnityPy step. See
+[`launcher/README.md`](launcher/README.md). The per-mod / framework scripts below remain
+the manual, advanced path and are what the launcher drives under the hood.
+
 
 ### `overlay/`
 A minimal, self-contained **native overlay mod** that draws a HUD (title, clock,
@@ -112,6 +125,7 @@ content-mods/<name>/
 
 | I want to… | Do this |
 |---|---|
+| **Mod with one GUI (recommended)** | Run [`launcher/`](launcher/README.md) — it installs the safe-base, lists every mod, edits config from each `mod.json` and does **Apply & Launch** in one click. Publish it self-contained for a no-.NET zip. The rows below are the manual scripts it drives under the hood. |
 | Just see how the DLL-hijack overlay works | Follow [`overlay/README.md`](overlay/README.md) |
 | Try the M1 + M2 + M3 + M4 + M5 safety framework now | Close the game. `safe-base/install.ps1` → play (green banner appears at top-centre) → `safe-base/uninstall.ps1`. Status any time: `safe-base/status.ps1` |
 | Back out of everything (mods + base) in one go | `safe-base/uninstall-all.ps1` — reverts every registered content mod, then uninstalls the base |
@@ -151,10 +165,15 @@ documented in each README as future work if the protection is ever broken.
   online leaderboards — which is the reason `safe-base/` exists.
 
 ## Credits & disclosure
-- Built with AI assistance (Claude).
+- **Built with AI assistance** — the Claude coding agent wrote the launcher, overlay,
+  safe-base and patchers; every in-game result was verified by hand on the author's own
+  machine before merging.
 - Tooling: [UnityPy](https://github.com/Logardas/UnityPy) for bundle edits,
   [`um` (universal-modder)](https://github.com/rehan-remade/universal-modder)
-  for the showcase video.
+  for the showcase video and the `publish check` lint.
+- The launcher is in-box **.NET 8 / WPF** with **no third-party NuGet packages** (so it
+  builds offline); the native `version.dll` / `steam_api64.dll` proxies are first-party
+  Win32 builds in this repo, not game code.
 - Uses only Win32 / GDI / PowerShell APIs. No third-party game code.
 
 ## License

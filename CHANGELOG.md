@@ -365,6 +365,47 @@ release notes inside its README.
   install self-heals. UnityPy round-trip was validated **offline on scene copies** (never the live game):
   a hometown repack preserved all 6626 objects with zero loss and the 287 MB sakura repacks in ~10 s.
   99 headless checks pass (the manifest-driven check now asserts the single-multiplier v1.1 schema).
+- **more-leaves v1.2 → v1.3.1 — per-world density + the coupled readers.** In-game checks
+  surfaced that density is gated by FOUR readers of the same leaf data, not one: the three
+  gameplay scenes, the pickable-registration cap in the `coreprefabs_assets_actor` template
+  prefab (per-world `scales.<world>`), the shared bank in `InitialLeaves_Hometown`, and the
+  title-screen **menu** scene (which reuses the Hometown bank). A naive append-at-tail
+  expansion produced a non-monotonic pickup bug — the bank is ordered as per-area contiguous
+  blocks, so v1.3 switched to in-place per-record expansion (each original followed by its
+  jittered copies, staying aligned with the scaled offsets for any partition), and v1.3.1
+  scales the menu scene to track Hometown. `patch_prefab.py` / `patch_positions.py` /
+  `patch_areas.py` are new; the mod is fully reversible and verified offline on scene copies.
+- **`launcher/` L9 — visual overhaul + functional settings.** Still zero NuGet packages, so
+  the offline build holds. The window is now a **left nav rail** (Dashboard / Mods / Settings)
+  replacing the `TabControl`; each page is its own `Views/*View` UserControl (the schema-driven
+  Mods editor moved verbatim, behaviour unchanged); the output log is a collapsible dark console
+  with a Clear affordance, and the Dashboard leads with **Play**. Theming is hand-written:
+  `Theme/Light.xaml` + `Theme/Dark.xaml` define one shared set of semantic brushes,
+  `Theme/Controls.xaml` supplies every `Style`/`ControlTemplate` and reads the palette via
+  `DynamicResource`, and `ThemeManager` swaps the merged dictionary + re-derives the accent at
+  runtime for a **live light/dark + accent change with no restart** (accent presets + custom hex).
+  `Services/AppConfig.cs` persists theme/accent/`contentRootOverride`/`gameExeOverride` to
+  `launcher/settings.json` (fail-safe load, normalising bad values); the Settings page applies
+  appearance live and wires the overrides into the existing seams (`MainViewModel.Rescan` →
+  `RepoLocator.TryLocate(start)`; `GameLauncher.Launch(exeOverride)` — override wins only if the
+  file exists, else the safe-base manifest path), with folder/file pickers raised as VM events and
+  opened in the code-behind. Fixes this session: a startup `XamlParseException` (a `TemplateBinding`
+  misused as a `Setter.Value`), XAML comments must not contain `--` (MC3000), and dark-mode contrast
+  (themed `ToolTip` + console `ToggleButton` styles; the selected mod-row version flips to the
+  on-accent foreground). 141 headless checks pass (adds `AppConfig` round-trip, content-root/game-exe
+  override resolution, accent lighten/darken/on-accent math and Light↔Dark token parity).
+- **`launcher/` L8 — distribution polish.** The launcher is promoted to the primary path in the
+  top-level README (it was missing from the layout and quick-start entirely): a "use the launcher"
+  first-run walkthrough, an honest requirements note (no .NET install for a self-contained build;
+  the one-time Python 3.12 + UnityPy step is still guided, not bundled), a troubleshooting pointer
+  to where the launcher log and state/settings live, and Credits/License covering the .NET 8 / WPF
+  app, UnityPy and `um`. `um publish check` runs clean on the mods and the launcher (0 failures /
+  0 warnings). The only FAILs are the two DLL-hijack proxies (`overlay/version.dll`,
+  `safe-base/steam_proxy/steam_api64.dll`) — **first-party builds, not game files**: verified they
+  differ from the game originals the safe-base backs up (e.g. the stub proxy is 162,304 B against
+  the real 319,584 B); `um` matches them only because it compares against the live game path where
+  the safe-base has already deployed our copy. Documented as a known false positive, not shipped
+  game binaries.
 
 ## 1.0.0
 Initial release: the `overlay/` example.

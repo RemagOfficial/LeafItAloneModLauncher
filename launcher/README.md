@@ -15,7 +15,8 @@ unchanged.
 
 ## Status
 
-Milestones **L1–L7** and **L9** are complete; **L8** (distribution polish) is pending.
+Milestones **L1–L9** are complete, including **L8** (distribution polish — the
+first-run walkthrough, troubleshooting map, release-zip layout and credits below).
 
 > **L9** is the visual overhaul + functional settings: a live Light/Dark theme with an
 > accent picker, a left nav rail (Dashboard / Mods / Settings), and a Settings page that
@@ -108,8 +109,12 @@ Five L9 headless checks cover the `AppConfig` round-trip, override-aware discove
 game-exe override resolution, the accent lighten/darken/on-accent math and Light↔Dark
 token parity; the full suite passes.
 
-Still ahead: **distribution polish** (L8 — README screenshots, honest AI/UnityPy/loader
-credits, a GitHub Releases zip, `um publish check`). Publishing stays the user's call.
+**L8** — **distribution polish.** The launcher is promoted to the primary path in the
+top-level README, and this file gains a first-run walkthrough, a troubleshooting map
+(where `state.json` / `settings.json` / `manifest.json` and the engine + overlay logs
+live), a concrete **self-contained release-zip layout** and honest credits/licensing.
+`um publish check` is clean across the content mods and the launcher. Releasing is still
+the user's call — nothing is published from here.
 
 
 ## Layout
@@ -183,7 +188,62 @@ Look is 100% hand-written WPF (no theme packages). If you add a control style, r
 the semantic brushes by `DynamicResource` (never a hard-coded colour) so it re-themes on
 a swap; keep the console dark in both palettes.
 
+## Using it (first run)
+
+No prerequisites to read up on — the app tells you what it needs, in order. Open the
+launcher and work top-to-bottom on the **Dashboard** (it leads with **Play**):
+
+1. **Install the safe-base** — if it's missing, the Dashboard shows an *Install
+   safe-base* button. One click, one UAC prompt (the scripts self-elevate; the launcher
+   never reimplements the firewall / Steam-proxy / save-isolation). When it's in place
+   the button flips to *Uninstall all* and you can *Run full status*.
+2. **Set up the mod engine (one time)** — mods that patch bundles need Python 3.12 +
+   UnityPy. The Dashboard's *Mod engine runtime* panel probes for it; if it's absent a
+   guided popup opens with the pinned download link, the exact
+   `pip install UnityPy` command and a **Re-check** that re-probes without a restart.
+   Nothing is bundled and no logic runs until Python is healthy.
+3. **Tune mods** — the **Mods** page lists every discovered mod (read straight from
+   each `content-mods/<id>/mod.json`); selecting one renders its config editor. Toggle a
+   mod on/off and edit values; the badge marks *pending* until applied.
+4. **Play** — **Apply & Launch** reconciles every mod (applies what should be live,
+   reverts what you switched off, skips what's in sync) and then starts the game. A
+   blocked or failed mod stops the sequence **before** launch, so you never boot
+   half-modded. Watch the collapsible **Output** console for the engines' live logs.
+
+Everything else (theme/accent, content-root and game-exe overrides) lives in
+**Settings** and applies live.
+
+## Troubleshooting
+
+The launcher keeps its own bookkeeping and the safe-base keeps its state under
+`%LOCALAPPDATA%\LeafItAloneSafe\` — none of it touches your real save unless a mod is
+applied, and uninstall restores everything:
+
+| Where… | Path |
+|---|---|
+| Launcher state (enabled toggles + last-applied config hash) | `%LOCALAPPDATA%\LeafItAloneSafe\launcher\state.json` |
+| Launcher appearance + path overrides (theme/accent/content-root/game-exe) | `%LOCALAPPDATA%\LeafItAloneSafe\launcher\settings.json` |
+| Per-mod live config (the values `apply.ps1` reads) | `%LOCALAPPDATA%\LeafItAloneSafe\<mod-id>.json` |
+| safe-base manifest (game path, proxy + backup hashes) | `%LOCALAPPDATA%\LeafItAloneSafe\manifest.json` |
+| Original files safe-base backed up (real `steam_api64.dll`, your `Saves/`) | `%LOCALAPPDATA%\LeafItAloneSafe\backup\` |
+
+- **The game won't launch from the launcher** — check the safe-base installed a game
+  path (see `manifest.json`), or set a **Game exe override** in Settings.
+- **"Mod engine runtime" says not found** — follow the setup popup's link +
+  `pip install UnityPy`, then **Re-check**; you can also point `LEAF_PYTHON` at a
+  specific interpreter.
+- **A mod failed to apply** — read the **Output** console (the engine's own error is
+  streamed there, colour-coded); every apply backs up before writing and auto-restores
+  on failure, so the game is left in its last good state.
+- **The in-game banner is red** — a safe-base precondition failed mid-session; run
+  *Run full status*. The overlay's own log is `LeafOverlay.log` beside the game exe; the
+  game's Unity log is at `%USERPROFILE%\AppData\LocalLow\Eternity\Leaf it Alone\`.
+- **Back out of everything** — *Uninstall all* reverts every registered mod, restores
+  your original save, then removes the firewall rule last. The manual equivalent is
+  `safe-base/uninstall-all.ps1`.
+
 ## Publish (self-contained, for users)
+
 
 Ships as one folder/zip the user can run with **no .NET install**:
 
@@ -199,6 +259,26 @@ dotnet publish src/Launcher/Launcher.csproj -c Release -r win-x64 --self-contain
 > (`dotnet publish -c Release`), which is what CI here validates. The published
 > `publish/` folder then needs the `content-mods/` and engine scripts beside it (see
 > the packaging milestone, L7).
+
+**Release-zip layout** (what goes beside the self-contained exe so `RepoLocator` finds a
+published root — a `content-mods/` tree next to a `tools/` engine folder):
+
+```
+LeafItAloneLauncher.zip
+└── LeafItAloneLauncher/
+    ├── LeafItAloneLauncher.exe   (self-contained; + any *.dll the publish drops)
+    ├── content-mods/             every mod: <id>/mod.json + apply.ps1/revert.ps1 + <patch>.py
+    └── tools/                    the safe-base engines the launcher shells out to
+        ├── install.ps1  uninstall.ps1  uninstall-all.ps1  status.ps1
+        ├── common.ps1   base.psm1
+        └── steam_proxy/steam_api64.dll   (first-party stub proxy, not a game file)
+```
+
+Zip that folder and attach it to a GitHub Release; users unzip anywhere and run the exe
+(no .NET install). **Do not include** `bin/`, `obj/`, `publish/` intermediates, the
+`_re_scratch/` scratch dir, `mod-backups/`, or any game file — the `um publish check`
+lint above is the guard against exactly that.
+
 
 ## `mod.json` manifest schema
 
@@ -238,3 +318,20 @@ truth for reading it, and the launcher preserves any keys the schema does not
 mention (`_comment`, `_applyHelper`, …). `content-mods/bag-capacity/mod.json` is the
 reference implementation and `content-mods/more-leaves/mod.json` is the second — added
 with **no launcher code**, which is the point of the manifest-driven design.
+
+## Credits & license
+
+- **Built with AI assistance** (the Claude coding agent), with every in-game result
+  verified by hand on the user's own machine before merge.
+- **Runtime:** .NET 8 / WPF (in-box, MIT-licensed) — the launcher pulls **no NuGet
+  packages**, so it builds offline against the installed targeting packs.
+- **Engine it drives:** [UnityPy](https://github.com/Logardas/UnityPy) (MIT) for the
+  AssetBundle patchers, invoked through the repo's own tested PowerShell scripts — the
+  launcher is an orchestrator, not a re-implementation of the safety layer.
+- **Overlay technique:** the native `version.dll` / `steam_api64.dll` proxies are
+  first-party Win32 builds in this repo (their `.cpp`/`.def` and MSVC intermediates ship
+  beside them); they are **not** game files, and none are redistributed.
+- **Lint:** `um` (universal-modder) `publish check` runs clean across the mods + launcher.
+- **License:** MIT for everything here. You must own *Leaf it Alone* to run any of it.
+  **No game files or extracted game assets are redistributed.**
+
