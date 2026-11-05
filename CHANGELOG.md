@@ -43,6 +43,14 @@ release notes inside its README.
   path (leaderboard upload, achievements, stats, cloud saves) because the game
   never obtains an `ISteamUserStats`. Remaining leaks (M3-M4) are pre-existing
   Steam-side queue and mid-session rule tampering.**
+- **`safe-base/` M2 tested (2026-11-05)**. Install / status / in-game /
+  uninstall pass end-to-end. Game launches normally with the pure-stub proxy
+  in place — no "Steam required" prompt, no crash — so **no compat-mode
+  variant is needed** (the game's `SteamAPI_Init() == false` branch already
+  handles offline correctly). The in-game leaderboard now renders **empty**,
+  whereas before M2 it populated from `Steam.exe` via loopback (that was the
+  leak M2 was built to close). Both upload paths (M1 web-service, M2
+  Steamworks) are now confirmed closed by observation.
 - First content mod planned: `content-mods/bag-capacity/` (M6).
 
 ## 1.0.0

@@ -61,9 +61,13 @@ $real = "B:\SteamLibrary\steamapps\common\Leaf it Alone\Leaf it Alone_Data\Plugi
   spec. Fix by removing one of the two declarations.
 - **We deliberately do not forward anything to the real DLL.** No lazy
   loading, no passthrough for the "harmless" calls. The whole point is that
-  nothing from the game ever reaches Steam. If the game does need a specific
-  Steam feature for single-player (e.g. Steam Input for controllers), that's
-  a "compat mode" we would add later behind a manifest flag. Not now.
+  nothing from the game ever reaches Steam. **Tested 2026-11-05:** the game
+  launches and plays normally with the pure-stub proxy in place — no
+  "Steam required" prompt, no crash. The in-game leaderboard shows empty
+  (the game's "Steam unavailable" branch handles it), so no compat-mode
+  variant is needed. If a future game update starts hard-depending on a
+  specific Steam feature for single-player (Steam Input for controllers,
+  say), we'd add a compat-mode proxy behind a manifest flag at that point.
 
 ## What this does NOT block
 

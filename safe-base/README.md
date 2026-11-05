@@ -1,10 +1,11 @@
 # `safe-base/` — Offline-safety framework
 
-**Status: M1 + M2 landed — a verified Windows Firewall outbound-block AND a
-`steam_api64.dll` stub proxy that makes `SteamAPI_Init` fail.** Together these
-close every upload path the game process can initiate. M3-M6 (save isolation,
-DLL trip-wire, PS SDK, first content mod) are still planned; roadmap at the
-bottom.
+**Status: M1 + M2 landed and in-game tested (2026-11-05) — a verified Windows
+Firewall outbound-block AND a `steam_api64.dll` stub proxy that makes
+`SteamAPI_Init` fail. Leaderboards now render empty inside the game.**
+Together these close every upload path the game process can initiate.
+M3-M6 (save isolation, DLL trip-wire, PS SDK, first content mod) are still
+planned; roadmap at the bottom.
 
 Install this **before** any mod in `../content-mods/`.
 
@@ -157,13 +158,18 @@ Delivered one milestone at a time, each independently testable before the next.
        That's expected at M1; **M2** closes it.
   5. `uninstall.ps1` -> confirm -> rule gone, `status.ps1` shows "not
      installed".
-- **M2 - LANDED** — `steam_api64.dll` stub proxy. `install.ps1` finds the
+- **M2 - LANDED, TESTED** — `steam_api64.dll` stub proxy. `install.ps1` finds the
   game's real `steam_api64.dll`, moves it to `%LOCALAPPDATA%\LeafItAloneSafe\
   backup\steam_api64.dll`, drops the prebuilt proxy at the same path, and
   verifies with hash match + size classification. `uninstall.ps1` restores
   the real DLL first (refusing if what's there now isn't our proxy — so we
   never clobber a manual restore). `status.ps1` shows the current DLL class.
-  Test plan:
+  Verified end-to-end in-game 2026-11-05: game launches normally with the
+  proxy in place (no "Steam required" error, no crash — the game degrades
+  gracefully when `SteamAPI_InitFlat` returns false, so no compat-mode
+  variant is needed); the in-game leaderboard now shows empty rather than
+  populating from `Steam.exe`. Achievements / stats / Steam Cloud sync paths
+  are structurally closed the same way. Test plan:
   1. `install.ps1` -> confirm plan, approve UAC -> should print `[M2] proxy
      active` and record `steamProxy` block in the manifest.
   2. `status.ps1` -> `[M2] Steam proxy layer: current DLL: PROXY`, `backup
@@ -197,7 +203,7 @@ two mitigations.
 | Leak path | How it works | M1 (firewall) | M2 (proxy) | What closes it |
 |---|---|---|---|---|
 | Game → its own web service (HTTPS via `UnityWebRequest`) | `Leaf it Alone.exe` opens a direct TCP+TLS connection to a dev-hosted endpoint | ✅ blocked (SYN dies) | n/a | **M1** |
-| Game → Steam leaderboard upload (`UploadLeaderboardScore`) | Game calls `steam_api64.dll` → loopback IPC → `Steam.exe` → HTTPS | ❌ (Steam's exe isn't the rule target; loopback unfiltered) | ✅ blocked (`SteamAPI_Init` returns false, game never gets the interface) | **M2** |
+| Game → Steam leaderboard upload (`UploadLeaderboardScore`) | Game calls `steam_api64.dll` → loopback IPC → `Steam.exe` → HTTPS | ❌ (Steam's exe isn't the rule target; loopback unfiltered) | ✅ blocked, **tested in-game 2026-11-05** (leaderboard renders empty) | **M2** |
 | Game → Steam stats / achievements (`SetStat`, `SetAchievement`) | Same as above | ❌ | ✅ blocked | **M2** |
 | Steam Cloud save sync | Steam client pushes/pulls `UserData/` on its own schedule | ❌ | ✅ indirectly (init-fail means game never enters cloud-enabled state) | **M2** |
 | Save file re-upload on next online launch (queued or embedded submissions) | Uninstall → play vanilla → the game (or Steam) resubmits what's in the save | ❌ | ❌ (proxy's gone after uninstall) | **M3** (modded `UserData/` discarded on uninstall, vanilla restored) |

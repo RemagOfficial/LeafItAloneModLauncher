@@ -21,17 +21,20 @@ protected Unity IL2CPP build. Fully shipped, documented and videoed.
 
 ### `safe-base/`
 The **offline-safety framework**. Installs once, keeps modded play from ever
-touching the game's leaderboards. **Status: M1 + M2 landed** — the firewall
-block AND the Steamworks stub proxy are implemented, tested and reversible
-today. Two upload paths, both closed. Three more milestones (save isolation,
-DLL trip-wire, PS SDK) are staged as M3-M5:
+touching the game's leaderboards. **Status: M1 + M2 landed, both tested
+end-to-end** — the firewall block AND the Steamworks stub proxy are working
+and reversible today. Verified in-game 2026-11-05: game launches normally with
+the proxy in place, leaderboard now renders empty (was populating via
+`Steam.exe` before M2). Two upload paths, both closed. Three more milestones
+(save isolation, DLL trip-wire, PS SDK) are staged as M3-M5:
 - **[M1 ✅]** Windows Firewall outbound-block on `Leaf it Alone.exe`,
   verified at install (rule + service + manifest). Closes the game's own
   HTTPS path.
 - **[M2 ✅]** A `steam_api64.dll` stub proxy (1089 exports, all returning
   0) that makes `SteamAPI_Init` fail. Closes every Steamworks-mediated path
   — leaderboard upload, achievements, stats, cloud saves — because the game
-  process never gets a valid interface to call.
+  process never gets a valid interface to call. Game launches cleanly with
+  the proxy in place; the in-game leaderboard renders empty.
 - **[M3]** **Save isolation** on install (real save moved aside, empty
   `UserData/` made); the modded save is **discarded on uninstall** so queued
   submissions never leak when you go back online.
