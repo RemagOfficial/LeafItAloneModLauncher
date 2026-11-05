@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    L1 headless verification (plan "Test plan": a runner/unit test with no game).
+    A console harness, not part of the shipped app: it drives RepoLocator +
+    ModDiscovery against the real repo layout and asserts the bag-capacity
+    manifest round-trips into the model. Run: dotnet run -project tests/HeadlessChecks
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>LeafItAlone.Launcher.Tests</RootNamespace>
+    <AssemblyName>LauncherHeadlessChecks</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Launcher\Launcher.csproj" />
+  </ItemGroup>
+
+</Project>

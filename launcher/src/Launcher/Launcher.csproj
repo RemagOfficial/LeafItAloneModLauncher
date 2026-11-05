@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Leaf it Alone Mod Launcher (plan L1).
+    .NET 8 WPF, self-contained publish so public mod users need no .NET install.
+    The app never reimplements the safety-critical engines; it orchestrates the
+    existing PowerShell SDK + UnityPy patchers as subprocesses (see Services/ProcessRunner.cs)
+    and drives mods purely from their content-mods/<id>/mod.json manifests.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>LeafItAlone.Launcher</RootNamespace>
+    <AssemblyName>LeafItAloneLauncher</AssemblyName>
+    <!-- No external NuGet packages: System.Text.Json ships with the framework,
+         so the project restores/builds fully offline. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Deterministic, self-contained single-file friendly defaults. -->
+    <AppendTargetFrameworkToOutputPath>true</AppendTargetFrameworkToOutputPath>
+    <EnableDefaultApplicationDefinition>true</EnableDefaultApplicationDefinition>
+  </PropertyGroup>
+
+</Project>

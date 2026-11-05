@@ -1,0 +1,92 @@
+{
+  "$comment": "Launcher manifest for the bag-capacity mod (plan: 'Data model'). This file only DESCRIBES the mod; the value store stays the live %LOCALAPPDATA%\\LeafItAloneSafe\\bag-capacity.json that apply.ps1 already seeds and reads, and apply/revert still run the validated scripts. Adding a mod means writing a manifest like this, never new launcher UI code.",
+
+  "id": "bag-capacity",
+  "name": "Bigger leaf bags",
+  "version": "1.2.0",
+  "description": "Makes every leaf bag bigger so you can carry more before unloading. Choose a simple multiplier over the vanilla capacities, or set each bag size explicitly.",
+  "homepage": "",
+  "order": 10,
+
+  "configPath": "%LOCALAPPDATA%\\LeafItAloneSafe\\bag-capacity.json",
+
+  "config": {
+    "fields": [
+      {
+        "key": "mode",
+        "label": "Sizing mode",
+        "type": "enum",
+        "options": ["multiplier", "sizes"],
+        "default": "multiplier",
+        "help": "multiplier scales the vanilla 50/200/500/800; sizes sets each bag explicitly."
+      },
+      {
+        "key": "multiplier",
+        "label": "Multiplier",
+        "type": "float",
+        "min": 0.1,
+        "max": 50,
+        "step": 0.1,
+        "default": 2.0,
+        "help": "Applied to the vanilla capacities (small 50, medium 200, big 500, giant 800).",
+        "when": { "key": "mode", "equals": "multiplier" }
+      },
+      {
+        "key": "sizes.small",
+        "label": "Small bag",
+        "type": "int",
+        "min": 1,
+        "max": 1000000,
+        "step": 10,
+        "default": 100,
+        "when": { "key": "mode", "equals": "sizes" }
+      },
+      {
+        "key": "sizes.medium",
+        "label": "Medium bag",
+        "type": "int",
+        "min": 1,
+        "max": 1000000,
+        "step": 10,
+        "default": 400,
+        "when": { "key": "mode", "equals": "sizes" }
+      },
+      {
+        "key": "sizes.big",
+        "label": "Big bag",
+        "type": "int",
+        "min": 1,
+        "max": 1000000,
+        "step": 10,
+        "default": 1000,
+        "when": { "key": "mode", "equals": "sizes" }
+      },
+      {
+        "key": "sizes.giant",
+        "label": "Giant bag",
+        "type": "int",
+        "min": 1,
+        "max": 1000000,
+        "step": 10,
+        "default": 1600,
+        "when": { "key": "mode", "equals": "sizes" }
+      }
+    ]
+  },
+
+  "apply": {
+    "script": "apply.ps1",
+    "args": ["-Yes"]
+  },
+
+  "revert": {
+    "script": "revert.ps1",
+    "args": ["-Yes"]
+  },
+
+  "requires": {
+    "safeBase": true,
+    "gameNotRunning": true,
+    "python": true
+  }
+}

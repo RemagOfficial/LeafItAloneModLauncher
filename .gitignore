@@ -27,6 +27,16 @@ venv/
 mod-backups/
 *.bak
 
+# .NET launcher build output (never commit)
+bin/
+obj/
+launcher/publish/
+*.user
+
+# Embedded/portable runtime staged at package time (huge; not source)
+launcher/runtime/
+
+
 # OS noise
 Thumbs.db
 [Dd]esktop.ini

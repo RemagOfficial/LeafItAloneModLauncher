@@ -233,6 +233,22 @@ release notes inside its README.
   re-drops the built `version.dll`, regenerates `LeafOverlay.ini` (so new sections
   like `[bageditor]` land on already-installed games), and updates the manifest
   SHA — touching no firewall/proxy/save state, and refusing while the game runs.
+- **`launcher/` L1 — WPF scaffold + data-driven mod manifests.** Begins the
+  in-app launcher that replaces the clunky per-mod script UX and the M8 in-game
+  F8 editor (retired at L6). A .NET 8 WPF app (`launcher/`) that is an
+  **orchestrator, not a rewrite**: every engine call funnels through one
+  `ProcessRunner` (`powershell -File`, args quoted via `ArgumentList`, streamed
+  stdout/stderr into an in-app Output log drawer, timeout + exit code), so no
+  patch/firewall/proxy logic is duplicated in C#. Mods become data-driven via a
+  per-mod `content-mods/<id>/mod.json` manifest (id/name/version/order, a
+  schema of `config.fields` that will auto-generate editors in L2, `apply`/`revert`
+  command templates, `requires`). `bag-capacity` refactored to ship one; the
+  launcher lists discovered mods read-only. `global.json` pins the .NET 8 SDK so it
+  builds offline against the installed 8.0 packs. L1 headless checks
+  (`launcher/tests/HeadlessChecks`) verify discovery, the manifest round-trip,
+  `%LOCALAPPDATA%` path expansion and the subprocess runner. Framework-dependent
+  publish green; `--self-contained` publish needs the runtime packs (network) —
+  documented in `launcher/README.md`.
 
 ## 1.0.0
 Initial release: the `overlay/` example.
