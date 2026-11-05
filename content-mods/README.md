@@ -1,0 +1,118 @@
+# `content-mods/` — Gameplay patches
+
+Small, focused mods that change what's *in the game* — bag sizes, leaf counts,
+seal times, textures, new achievements, whatever the bundle data can express.
+Each mod lives in its own folder and depends on [`../safe-base/`](../safe-base/README.md).
+
+**Status: none shipped yet.** The framework's M6 milestone will land the first
+one (`bag-capacity/`). Until then this folder is documentation.
+
+## Why we can content-mod at all
+
+`global-metadata.dat` is encrypted (BepInEx and MelonLoader can't finish
+initialising), so C# mods are blocked. But the actual gameplay content lives
+in `StreamingAssets/aa/StandaloneWindows64/*.bundle` as **plain UnityFS**
+AssetBundles — 123 of them, **not encrypted**, with intact TypeTrees. We can
+open them with [UnityPy](https://github.com/Logardas/UnityPy) and rewrite
+MonoBehaviour / ScriptableObject fields directly:
+
+```
+StreamingAssets/aa/StandaloneWindows64/
+├── coreassets_assets_actors       ← leaf-bag prefabs (Small/Medium/Big/Giant)
+├── coreassets_assets_meta         ← *capacity numbers* for those bags
+├── coreassets_assets_leaves       ← leaf data
+├── coreassets_assets_collectables ← x3 shards
+├── coreassets_assets_modifiers    ← x3 shards
+├── coreassets_assets_objectives   ← x3 shards (incl. `SellWorthyBag`)
+├── coreassets_assets_gamefeatures ← x3 shards
+├── coreassets_assets_areas        ← x3 shards, each has `leavesCount`
+├── coreassets_assets_achievements ← x2 shards
+├── coreassets_assets_contexts
+├── coreassets_assets_entries
+├── visuals_assets_bags            ← bag models / textures
+├── visuals_assets_tools           ← rake / tool visuals
+└── ... (123 total)
+```
+
+## The rule
+
+> **A content mod never touches the network, the firewall, the save, or
+> Steam.** All of that is `safe-base`'s job. A content mod is *just the
+> payload*.
+
+`apply.ps1`'s first real line is always `Assert-SafeBaseActive`. If the base
+isn't installed, the mod refuses to run with a clear link to `../safe-base/`.
+
+## Layout (skeleton for each mod)
+
+```
+content-mods/<modname>/
+├── README.md         what it changes, screenshot, "requires safe-base ≥ 1.0"
+├── apply.ps1         the installer, imports base.psm1, calls Backup-Original,
+│                     runs the patch, calls Register-Mod
+├── revert.ps1        restore from the base's backup, Unregister-Mod
+├── patch.py          the actual UnityPy / file edit (or C++, whatever fits)
+└── LICENSE.md        MIT
+```
+
+`apply.ps1` looks like:
+
+```powershell
+$base = Join-Path $env:LOCALAPPDATA "LeafItAloneSafe\base.psm1"
+if (-not (Test-Path $base)) {
+    Write-Error "You must install safe-base first: <link to safe-base README>"
+    exit 1
+}
+Import-Module $base
+Assert-SafeBaseActive
+Assert-SafePreconditions
+
+$target = "<resolved path to the game's bundle>"
+Backup-Original $target -ForMod "bag-capacity"
+& python patch.py --target $target --capacity-small 200 --capacity-medium 800 ...
+Register-Mod -Name "bag-capacity" -Files @($target)
+```
+
+`revert.ps1` is symmetric:
+
+```powershell
+Import-Module (Join-Path $env:LOCALAPPDATA "LeafItAloneSafe\base.psm1")
+Restore-Original -ForMod "bag-capacity"
+Unregister-Mod -Name "bag-capacity"
+```
+
+## Rules a content mod must follow
+
+- **Only edit files under `StreamingAssets/aa/StandaloneWindows64/`**, or add
+  new files under an obviously-modded prefix. Never touch `global-*`,
+  `level*`, `resources.assets` (encrypted), `GameAssembly.dll`,
+  `UnityPlayer.dll`, or anything else in the game folder that isn't a plain
+  bundle.
+- **Never** install DLLs or firewall rules — that's `safe-base`.
+- **Always** call `Backup-Original` before the edit, and register files with
+  the base so `uninstall-all.ps1` can cleanly undo everything.
+- **Ship no game files.** Bundle-editing patches run on the user's own
+  bundles. Only `patch.py` and the scripts are published.
+- **Do not** try to disable leaderboards / achievements / Steam within a
+  content mod. The base does it. If a mod needs a gameplay-only "no scoring
+  this run" flag, use in-game rules (e.g. set `leavesCount = 0` on a test
+  area), not network/Steam patches.
+
+## Planned mods
+
+| Mod | What it changes | Bundle(s) | Field(s) |
+|---|---|---|---|
+| `bag-capacity/` (M6, first) | Bigger leaf bags | `coreassets_assets_meta_*` | `capacity` on 4 MonoBehaviours (Small=50, Med=200, Big=500, Giant=800) |
+| `bag-speed/` | Faster seal & empty | `coreassets_assets_actors_*` | `sealingTime`, `emptyingDuration` on each `*LeafBag` |
+| `more-leaves/` | Denser levels | `coreassets_assets_areas*` | `leavesCount` per area |
+| `instant-seal/` | QoL: no seal delay | same as `bag-speed/` | set `sealingTime = 0.0` |
+| `custom-textures/` | Bag / tool skin swap | `visuals_assets_bags_*`, `visuals_assets_tools_*` | Texture2D replacement (UnityPy export → edit → import) |
+
+## Requirements
+- Windows x64, *Leaf it Alone* on Steam (you must own the game).
+- [`safe-base/`](../safe-base/README.md) installed and active.
+- [Python 3.11 or 3.12](https://python.org) with `pip install UnityPy`.
+  (Python 3.14 currently segfaults on UnityPy's native deps — pinned to 3.12.)
+
+## License
+MIT. No game files or extracted game assets are redistributed.

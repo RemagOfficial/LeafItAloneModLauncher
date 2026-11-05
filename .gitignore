@@ -17,6 +17,16 @@ backup/
 *.tmp
 take*/
 
+# Python tooling (UnityPy etc. used by content-mods patches)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Never commit game-derived content
+mod-backups/
+*.bak
+
 # OS noise
 Thumbs.db
 [Dd]esktop.ini
