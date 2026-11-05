@@ -148,6 +148,19 @@ The panel, its key and its clamps are configured in the game folder's
 an absolute path, so it works even when the game is installed on a different
 drive than your Windows profile.
 
+**Getting it onto an already-installed game:** the editor is compiled into the
+overlay's `version.dll`, so pick up the rebuilt build without disturbing your
+firewall/proxy/saves:
+
+```powershell
+cd overlay       ; .\build_overlay.ps1                 # rebuild version.dll
+cd ..\safe-base  ; .\redeploy-overlay.ps1              # close the game first
+```
+
+Then run the mod once (`content-mods\bag-capacity\apply.ps1`) so it seeds the
+canonical config with the helper path, and the F8 panel is live in your next
+session.
+
 ## Uninstall
 
 ```powershell

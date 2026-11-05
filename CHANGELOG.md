@@ -226,6 +226,13 @@ release notes inside its README.
   `%LOCALAPPDATA%`, not DLL-relative. `[bageditor]` added to `LeafOverlay.ini`
   (`ToggleKey`/`Min`/`Max`/`Step`/`StepBig`). Rebuilt `version.dll` (MSVC, clean);
   offline JSON round-trip (seed + overlay-saved config) verified.
+- **`safe-base/` M8 mod-support — `redeploy-overlay.ps1`.** `install.ps1` refuses
+  a double install, so iterating on the overlay used to mean a full
+  uninstall/reinstall (churning the firewall, proxy and saves) just to swap the
+  one `version.dll` in the game folder. This adds a sanctioned one-command refresh:
+  re-drops the built `version.dll`, regenerates `LeafOverlay.ini` (so new sections
+  like `[bageditor]` land on already-installed games), and updates the manifest
+  SHA — touching no firewall/proxy/save state, and refusing while the game runs.
 
 ## 1.0.0
 Initial release: the `overlay/` example.

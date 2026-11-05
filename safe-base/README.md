@@ -45,6 +45,18 @@ Install this **before** any mod in `../content-mods/`.
 .\safe-base\uninstall.ps1
 ```
 
+After you've rebuilt the overlay (a new banner, the M8 F8 bag-editor, ...) you
+don't need to uninstall/reinstall the whole safety framework just to swap the one
+`version.dll` in the game folder. `install.ps1` refuses a double install on
+purpose, so use the refresh tool instead — it re-drops the built `version.dll`,
+regenerates `LeafOverlay.ini` (so new `[bageditor]` etc. sections appear), and
+updates the manifest SHA, **touching no firewall/proxy/save state**:
+
+```powershell
+.\overlay\build_overlay.ps1              # rebuild version.dll first
+.\safe-base\redeploy-overlay.ps1         # refuses if the game is running
+```
+
 Overrides:
 
 - Game path: `install.ps1 -GameExe "D:\some\other\Leaf it Alone.exe"`
