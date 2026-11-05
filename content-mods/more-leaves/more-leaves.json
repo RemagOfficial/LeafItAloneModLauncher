@@ -1,0 +1,16 @@
+{
+  "_comment": "more-leaves config (v1.2). Edit this file, then run apply.ps1 (it reverts to vanilla and re-patches automatically). apply.ps1 CLI -ScaleHometown/-ScaleCastle/-ScaleSakura override what's here. The launcher writes the same file at %LOCALAPPDATA%\\LeafItAloneSafe\\more-leaves.json.",
+
+  "_scale_notes": "Per-world INTEGER density factor. For each world the mod appends new scatter positions to that world's leaf bank (InitialLeaves_<World> in coreassets_assets_leaves) AND raises that world's leaf spawn budget (scene initArgs) by the same factor, so the extra leaves actually appear. 1 = leave that world vanilla, 2 = twice as many leaves, 3 = three times, etc. The completion goal rises to match the bigger harvest. Extra leaves are scattered near existing spots (scatterRadius), not stacked on top of them.",
+
+  "_scatter_notes": "scatterRadius is how far (in metres, x/z) a copied leaf is nudged from its original spot. 0 stacks copies exactly (not recommended); ~0.6 spreads them into the nearby grass. Leaf HEIGHT (y) is always preserved, so nothing floats or sinks. seed makes the scatter deterministic (re-runs are byte-identical); change it for a different spread.",
+
+  "scales": {
+    "hometown": 2,
+    "castle": 2,
+    "sakura": 2
+  },
+
+  "scatterRadius": 0.6,
+  "seed": 1337
+}

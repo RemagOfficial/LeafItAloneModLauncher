@@ -43,6 +43,14 @@ public sealed class ApplyOrchestrator
     /// <summary>Interpreter resolved by <see cref="PythonLocator"/>; null when none found.</summary>
     public string? PythonPath { get; set; }
 
+    /// <summary>
+    /// L7: whether the resolved interpreter was probed and can import UnityPy. Defaults to
+    /// true so a caller that never probes (or a mod that needs no Python) is unaffected; the
+    /// VM sets it from <see cref="PythonHealth"/>. When false, a Python-requiring apply is
+    /// blocked with a message that points at the Setup guide rather than silently failing.
+    /// </summary>
+    public bool PythonReady { get; set; } = true;
+
     public static string SafeBaseRoot => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LeafItAloneSafe");
 
@@ -67,7 +75,9 @@ public sealed class ApplyOrchestrator
         if (req.SafeBase && !SafeBaseInstalled())
             return "safe-base is not installed - install it before applying or reverting.";
         if (!forRevert && req.Python && string.IsNullOrEmpty(PythonPath))
-            return "no Python interpreter found - set LEAF_PYTHON or add the bundled runtime.";
+            return "no Python interpreter found - open Setup to install Python 3.12 (amd64) + UnityPy.";
+        if (!forRevert && req.Python && !PythonReady)
+            return "Python is installed but UnityPy is missing - open Setup to add it (python -m pip install UnityPy).";
         return null;
     }
 

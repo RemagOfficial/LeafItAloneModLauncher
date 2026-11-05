@@ -1,0 +1,111 @@
+<UserControl x:Class="LeafItAlone.Launcher.Views.DashboardView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <UserControl.Resources>
+        <!-- Accent-tinted big call-to-action keeps its own template but inherits the shared one. -->
+        <Style x:Key="LaunchButton" TargetType="Button" BasedOn="{StaticResource PrimaryButtonStyle}">
+            <Setter Property="FontSize" Value="15" />
+            <Setter Property="Padding" Value="24,12" />
+        </Style>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="0">
+        <StackPanel MaxWidth="860" HorizontalAlignment="Stretch" Margin="4,2,10,4">
+
+            <TextBlock Text="Get Leaf it Alone ready to play" Style="{StaticResource PageTitle}" />
+            <TextBlock Margin="0,4,0,16" Style="{StaticResource SecondaryText}"
+                       Text="The launcher drives the tested PowerShell + UnityPy engines and the safe-base. Nothing here is re-implemented in C#." />
+
+            <!-- Play (first: open the launcher and go) -->
+            <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                <StackPanel>
+                    <TextBlock Text="Play" Style="{StaticResource SectionTitle}" />
+                    <TextBlock Margin="0,6,0,12" Style="{StaticResource SecondaryText}" Text="{Binding ChangeSummary}" />
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="Apply &amp; Launch" Command="{Binding ApplyAndLaunchCommand}"
+                                Style="{StaticResource LaunchButton}" Margin="0,0,10,0" />
+                        <Button Content="Launch game only" Command="{Binding LaunchCommand}"
+                                Style="{StaticResource SecondaryButtonStyle}" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <TextBlock Margin="0,12,0,0" Style="{StaticResource MutedText}"
+                               Text="Close the game before applying: mods patch the bundle while it is not running. Any mod that fails to apply stops the sequence before the game launches, so you never boot a half-modded set." />
+                </StackPanel>
+            </Border>
+
+            <!-- Safe-base -->
+            <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                <StackPanel>
+                    <TextBlock Text="Safe-base" Style="{StaticResource SectionTitle}" />
+                    <TextBlock Margin="0,6,0,0" Style="{StaticResource SecondaryText}"
+                               Text="{Binding SafeBaseSummary}" />
+
+                    <Border Background="{DynamicResource BannerBgBrush}" BorderBrush="{DynamicResource BannerBorderBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,10,0,0"
+                            Visibility="{Binding FirstRunNeeded, Converter={StaticResource BoolVis}}">
+                        <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource BannerFgBrush}"
+                                   Text="Install the safe-base first. It adds the offline firewall block, the Steam stub proxy and save isolation, and deploys the SDK - then mods can be applied. A UAC prompt appears; close the game before installing." />
+                    </Border>
+
+                    <WrapPanel Margin="0,12,0,0">
+                        <Button Content="Install safe-base" Style="{StaticResource PrimaryButtonStyle}" Margin="0,0,8,8"
+                                Visibility="{Binding FirstRunNeeded, Converter={StaticResource BoolVis}}"
+                                Command="{Binding InstallSafeBaseCommand}" />
+                        <Button Content="Uninstall all (revert mods + remove safe-base)" Style="{StaticResource DangerButtonStyle}" Margin="0,0,8,8"
+                                Visibility="{Binding SafeBaseInstalled, Converter={StaticResource BoolVis}}"
+                                Command="{Binding UninstallAllCommand}" />
+                        <Button Content="Run full status" Style="{StaticResource SecondaryButtonStyle}" Margin="0,0,8,8"
+                                Command="{Binding RefreshStatusCommand}" />
+                    </WrapPanel>
+
+                    <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" Foreground="{DynamicResource StatusSuccessBrush}"
+                               Text="{Binding SafeBaseVerdict}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SecondaryText}">
+                                <Setter Property="Foreground" Value="{DynamicResource StatusSuccessBrush}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SafeBaseVerdict}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- Mod engine runtime -->
+            <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                <StackPanel>
+                    <TextBlock Text="Mod engine runtime" Style="{StaticResource SectionTitle}" />
+                    <TextBlock Margin="0,6,0,0" Style="{StaticResource SecondaryText}"
+                               Text="{Binding PythonStatusText}" />
+
+                    <Border Background="{DynamicResource BannerBgBrush}" BorderBrush="{DynamicResource BannerBorderBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,10,0,0"
+                            Visibility="{Binding PythonNeedsSetup, Converter={StaticResource BoolVis}}">
+                        <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource BannerFgBrush}"
+                                   Text="Patching mods needs Python 3.12 (64-bit) with UnityPy. Open the setup guide for the two one-time steps - you don't have to restart the launcher." />
+                    </Border>
+
+                    <Button Content="Set up Python…" Style="{StaticResource PrimaryButtonStyle}"
+                            Margin="0,12,0,0" HorizontalAlignment="Left" Command="{Binding PythonSetupCommand}" />
+                </StackPanel>
+            </Border>
+
+            <!-- Tools -->
+            <Border Style="{StaticResource Card}">
+                <StackPanel>
+                    <WrapPanel>
+                        <Button Content="Rescan mods" Command="{Binding RescanCommand}"
+                                Style="{StaticResource SecondaryButtonStyle}" Margin="0,0,8,8" />
+                        <Button Content="Test output runner" Command="{Binding DemoRunnerCommand}"
+                                Style="{StaticResource GhostButtonStyle}" Margin="0,0,8,8" />
+                    </WrapPanel>
+                    <TextBlock Margin="0,2,0,0" Style="{StaticResource MutedText}"
+                               Text="'Test output runner' proves the subprocess pipeline by running a harmless PowerShell one-liner - it does not touch the game." />
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

@@ -2,301 +2,119 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:v="clr-namespace:LeafItAlone.Launcher.Views"
-        Title="Leaf it Alone Mod Launcher" Height="640" Width="960"
-        WindowStartupLocation="CenterScreen">
-    <Window.Resources>
-        <BooleanToVisibilityConverter x:Key="BoolVis" />
-        <v:LogLineBrushConverter x:Key="LogLineBrush" />
-    </Window.Resources>
-    <DockPanel LastChildFill="True">
+        Title="Leaf it Alone Mod Launcher" Height="720" Width="1080"
+        MinHeight="560" MinWidth="900"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource WindowBackgroundBrush}"
+        TextElement.Foreground="{DynamicResource TextPrimaryBrush}"
+        FontFamily="{DynamicResource AppFont}">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="222" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
 
-        <!-- Status bar (dock bottom, above the log drawer) -->
-        <StatusBar DockPanel.Dock="Bottom">
-            <StatusBarItem>
-                <TextBlock Text="{Binding StatusText}" />
-            </StatusBarItem>
-        </StatusBar>
+        <!-- ============ NAV RAIL ============ -->
+        <Border Grid.Column="0" Background="{DynamicResource SurfaceAltBrush}"
+                BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,0,1,0">
+            <DockPanel LastChildFill="False">
 
-        <!-- Shared output log drawer (plan: streams each subprocess's stdout/stderr) -->
-        <Expander DockPanel.Dock="Bottom" Header="Output" IsExpanded="True">
-            <ListBox Height="150" FontFamily="Consolas" FontSize="12"
-                     Background="{StaticResource LogBrush}" Foreground="#D4D4D4"
-                     ItemsSource="{Binding LogLines}"
-                     v:LogAutoScroll.Enabled="True"
-                     ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                <ListBox.ItemTemplate>
-                    <DataTemplate>
-                        <TextBlock Text="{Binding}" TextWrapping="Wrap"
-                                   Foreground="{Binding Converter={StaticResource LogLineBrush}}" />
-                    </DataTemplate>
-                </ListBox.ItemTemplate>
-            </ListBox>
-        </Expander>
+                <!-- brand -->
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="20,22,20,22">
+                    <Border Width="30" Height="30" CornerRadius="9" Background="{DynamicResource AccentBrush}">
+                        <TextBlock Text="L" FontWeight="Bold" FontSize="16"
+                                   Foreground="{DynamicResource OnAccentBrush}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <StackPanel Margin="11,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="Leaf it Alone" FontWeight="Bold" FontSize="14" />
+                        <TextBlock Text="Mod Launcher" FontSize="11" Foreground="{DynamicResource TextMutedBrush}" />
+                    </StackPanel>
+                </StackPanel>
 
-        <!-- Root path strip -->
-        <Border DockPanel.Dock="Top" Background="{StaticResource PanelBrush}" Padding="10,6">
-            <StackPanel Orientation="Horizontal">
-                <TextBlock Text="Content root: " FontWeight="Bold" VerticalAlignment="Center" />
-                <TextBlock Text="{Binding RootPath}" VerticalAlignment="Center"
-                           Foreground="Gray" TextTrimming="CharacterEllipsis" MaxWidth="700" />
-            </StackPanel>
+                <!-- pages -->
+                <RadioButton DockPanel.Dock="Top" Style="{StaticResource NavItemStyle}" GroupName="nav"
+                             Content="&#xE80F;" Tag="Dashboard"
+                             Command="{Binding SelectSectionCommand}" CommandParameter="Dashboard"
+                             IsChecked="{Binding IsDashboardChecked, Mode=OneWay}" />
+                <RadioButton DockPanel.Dock="Top" Style="{StaticResource NavItemStyle}" GroupName="nav"
+                             Content="&#xE8FD;" Tag="Mods"
+                             Command="{Binding SelectSectionCommand}" CommandParameter="Mods"
+                             IsChecked="{Binding IsModsChecked, Mode=OneWay}" />
+                <RadioButton DockPanel.Dock="Top" Style="{StaticResource NavItemStyle}" GroupName="nav"
+                             Content="&#xE713;" Tag="Settings"
+                             Command="{Binding SelectSectionCommand}" CommandParameter="Settings"
+                             IsChecked="{Binding IsSettingsChecked, Mode=OneWay}" />
+
+                <!-- footer: busy hint -->
+                <Border DockPanel.Dock="Bottom" Margin="16,0,16,16">
+                    <TextBlock Text="Working…" FontSize="12" Foreground="{DynamicResource TextMutedBrush}"
+                               Visibility="{Binding IsBusy, Converter={StaticResource BoolVis}}" />
+                </Border>
+            </DockPanel>
         </Border>
 
-        <!-- Dashboard is the landing tab: it now carries the safe-base health/lifecycle
-             (L5) and the Apply & Launch action (L4). -->
-        <TabControl Margin="8" SelectedIndex="0">
-            <!-- Dashboard: lifecycle + the big apply/launch button arrive in L3-L5.
-                 For L1 it shows wiring and runs the runner self-test. -->
-            <TabItem Header="Dashboard">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="16">
-                    <TextBlock Text="Welcome" FontSize="20" FontWeight="Bold" />
-                    <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Foreground="#444"
-                               Text="This launcher manages Leaf it Alone mods and the safe-base by driving the already-tested PowerShell + UnityPy engines." />
-                    <Separator Margin="0,16" />
+        <!-- ============ CONTENT ============ -->
+        <DockPanel Grid.Column="1" LastChildFill="True">
 
-                    <!-- L5: safe-base lifecycle. Install / Uninstall / status all shell to
-                         the existing safe-base scripts; nothing is reimplemented here. -->
-                    <TextBlock Text="Safe-base" FontSize="16" FontWeight="Bold" />
-                    <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Foreground="#444"
-                               Text="{Binding SafeBaseSummary}" />
-
-                    <!-- first-run guidance when the framework is not installed yet -->
-                    <Border Background="#FFF6E5" BorderBrush="#E6B800" BorderThickness="1" CornerRadius="4"
-                            Padding="10" Margin="0,8,0,0"
-                            Visibility="{Binding FirstRunNeeded, Converter={StaticResource BoolVis}}">
-                        <TextBlock TextWrapping="Wrap" Foreground="#7A5C00"
-                                   Text="Install the safe-base first. It adds the offline firewall block, the Steam stub proxy and save isolation, and deploys the SDK - then mods can be applied. A UAC prompt appears; close the game before installing." />
-                    </Border>
-
-                    <WrapPanel Margin="0,10,0,0">
-                        <Button Content="Install safe-base" Padding="14,6" Margin="0,0,8,0"
-                                Background="{StaticResource AccentBrush}" Foreground="White"
-                                Visibility="{Binding FirstRunNeeded, Converter={StaticResource BoolVis}}"
-                                Command="{Binding InstallSafeBaseCommand}" />
-                        <Button Content="Uninstall all (revert mods + remove safe-base)" Padding="14,6" Margin="0,0,8,0"
-                                Visibility="{Binding SafeBaseInstalled, Converter={StaticResource BoolVis}}"
-                                Command="{Binding UninstallAllCommand}" />
-                        <Button Content="Run full status" Padding="14,6"
-                                Command="{Binding RefreshStatusCommand}" />
-                    </WrapPanel>
-
-                    <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Foreground="#2E7D32"
-                               Text="{Binding SafeBaseVerdict}">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock">
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding SafeBaseVerdict}" Value="">
-                                        <Setter Property="Visibility" Value="Collapsed" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-
-                    <Separator Margin="0,16" />
-
-                    <!-- L4: the one action. Reconciles every mod against its enable
-                         toggle (apply / revert in manifest order), then starts the game. -->
-                    <TextBlock Text="Play" FontSize="16" FontWeight="Bold" Margin="0,0,0,6" />
-                    <TextBlock Text="{Binding ChangeSummary}" TextWrapping="Wrap"
-                               Foreground="#444" Margin="0,0,0,8" />
-                    <StackPanel Orientation="Horizontal">
-                        <Button Content="Apply &amp; Launch" Command="{Binding ApplyAndLaunchCommand}"
-                                Padding="20,10" FontSize="15" FontWeight="Bold" Margin="0,0,8,0"
-                                Background="{StaticResource AccentBrush}" Foreground="White" />
-                        <Button Content="Launch game only" Command="{Binding LaunchCommand}"
-                                Padding="14,6" />
+            <!-- header band -->
+            <Border DockPanel.Dock="Top" Background="{DynamicResource SurfaceBrush}"
+                    BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,0,0,1" Padding="22,16">
+                <Grid>
+                    <TextBlock Text="{Binding PageTitle}" Style="{StaticResource PageTitle}" VerticalAlignment="Center" />
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <Border Background="{DynamicResource ChipBgBrush}" CornerRadius="9" Padding="10,3" Margin="0,0,8,0"
+                                Visibility="{Binding HasPending, Converter={StaticResource BoolVis}}">
+                            <TextBlock Text="{Binding PendingCount, StringFormat={}{0} pending}"
+                                       FontSize="12" Foreground="{DynamicResource ChipFgBrush}" />
+                        </Border>
+                        <Border Background="{DynamicResource SurfaceAltBrush}" CornerRadius="9" Padding="10,3">
+                            <TextBlock Text="{Binding Editors.Count, StringFormat={}{0} mod(s)}"
+                                       FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        </Border>
                     </StackPanel>
-                    <TextBlock Margin="0,8,0,0" Foreground="Gray" TextWrapping="Wrap"
-                               Text="Close the game before applying: mods patch the bundle while it is not running. Any mod that fails to apply stops the sequence before the game launches, so you never boot a half-modded set." />
+                </Grid>
+            </Border>
 
-                    <Separator Margin="0,16" />
-                    <WrapPanel>
-                        <Button Content="Rescan mods" Command="{Binding RescanCommand}"
-                                Padding="14,6" Margin="0,0,8,0" />
-                        <Button Content="Test output runner" Command="{Binding DemoRunnerCommand}"
-                                Padding="14,6" />
-                    </WrapPanel>
-                    <TextBlock Margin="0,10,0,0" Foreground="Gray" TextWrapping="Wrap"
-                               Text="'Test output runner' proves the subprocess pipeline by running a harmless PowerShell one-liner - it does not touch the game." />
-                </StackPanel>
-                </ScrollViewer>
-            </TabItem>
+            <!-- status bar (bottom-most) -->
+            <Border DockPanel.Dock="Bottom" Background="{DynamicResource SurfaceBrush}"
+                    BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,1,0,0" Padding="18,7">
+                <TextBlock Text="{Binding StatusText}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
+                           TextTrimming="CharacterEllipsis" />
+            </Border>
 
-            <!-- Mods: live, schema-driven editor. Each row is generated from the
-                 selected mod's manifest config.fields; the control shown per row is
-                 chosen by the field's declared type, and visibility honours `when`. -->
-            <TabItem Header="Mods">
-                <Grid Margin="8">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="300" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-
-                    <ListBox Grid.Column="0" ItemsSource="{Binding Editors}"
-                             SelectedItem="{Binding SelectedEditor}"
-                             HorizontalContentAlignment="Stretch">
+            <!-- output console (above the status bar) -->
+            <Border DockPanel.Dock="Bottom" Background="{DynamicResource ConsoleBgBrush}">
+                <StackPanel>
+                    <DockPanel Margin="14,8" LastChildFill="False">
+                        <ToggleButton x:Name="ConsoleToggle" DockPanel.Dock="Left" IsChecked="True"
+                                      Content="Output" Style="{StaticResource ConsoleToggleStyle}" />
+                        <Button DockPanel.Dock="Right" Content="Clear" Style="{StaticResource GhostButtonStyle}"
+                                Foreground="{DynamicResource ConsoleFgBrush}" Padding="10,2"
+                                Command="{Binding ClearLogCommand}" />
+                    </DockPanel>
+                    <ListBox Height="150" Visibility="{Binding IsChecked, ElementName=ConsoleToggle, Converter={StaticResource BoolVis}}"
+                             FontFamily="{DynamicResource MonoFont}" FontSize="12"
+                             Background="Transparent" BorderThickness="0" Foreground="{DynamicResource ConsoleFgBrush}"
+                             ItemsSource="{Binding LogLines}"
+                             v:LogAutoScroll.Enabled="True"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
-                                <Grid Margin="4">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0">
-                                        <TextBlock Text="{Binding Mod.Name}" FontWeight="Bold" FontSize="13" />
-                                        <TextBlock Text="{Binding Mod.Version}" Foreground="Gray" FontSize="11" />
-                                    </StackPanel>
-                                    <Border Grid.Column="1" Background="#FFE9A8" CornerRadius="8"
-                                            Padding="7,1" VerticalAlignment="Center"
-                                            Visibility="{Binding IsPending, Converter={StaticResource BoolVis}}">
-                                        <TextBlock Text="pending" FontSize="11" Foreground="#7A5C00" />
-                                    </Border>
-                                </Grid>
+                                <TextBlock Text="{Binding}" TextWrapping="Wrap"
+                                           Foreground="{Binding Converter={StaticResource LogLineBrush}}" />
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
-
-                    <ScrollViewer Grid.Column="1" Margin="12,4" VerticalScrollBarVisibility="Auto"
-                                  DataContext="{Binding SelectedEditor}">
-                        <StackPanel>
-                            <TextBlock Text="{Binding Mod.Name}" FontSize="18" FontWeight="Bold" />
-                            <TextBlock Text="{Binding Mod.Version}" Foreground="Gray" />
-                            <TextBlock TextWrapping="Wrap" Margin="0,8,0,0" Text="{Binding Mod.Description}" />
-
-                            <CheckBox Margin="0,12,0,0" IsChecked="{Binding Enabled, Mode=TwoWay}"
-                                      Content="Enable this mod (Apply/Revert below; all enabled mods apply on Launch in L4)" FontWeight="Bold" />
-
-                            <WrapPanel Margin="0,12,0,0">
-                                <Button Content="Save config" Command="{Binding SaveCommand}"
-                                        Padding="14,6" Margin="0,0,8,0"
-                                        Background="{StaticResource AccentBrush}" Foreground="White" />
-                                <Button Content="Reload" Command="{Binding ReloadCommand}" Padding="14,6" Margin="0,0,8,0" />
-                                <!-- Apply/Revert live on the MainViewModel; reach them from
-                                     the editor's DataContext via the window. -->
-                                <Button Content="Apply to game" Padding="14,6" Margin="0,0,8,0"
-                                        Foreground="White" Background="#2E7D32"
-                                        Command="{Binding DataContext.ApplyCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
-                                <Button Content="Revert" Padding="14,6"
-                                        Command="{Binding DataContext.RevertCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
-                            </WrapPanel>
-                            <TextBlock Margin="0,6,0,0" Foreground="Gray" TextWrapping="Wrap" Text="{Binding Info}" />
-
-                            <TextBlock Margin="0,14,0,2" Text="Config store" FontWeight="Bold" />
-                            <TextBlock TextWrapping="Wrap" Foreground="#333" Text="{Binding LivePath}" />
-
-                            <TextBlock Margin="0,6,0,2" Text="Requires" FontWeight="Bold" />
-                            <TextBlock TextWrapping="Wrap" Foreground="#333" Text="{Binding Mod.RequiresSummary}" />
-
-                            <TextBlock Margin="0,14,0,4" Text="Settings" FontWeight="Bold" FontSize="14" />
-                            <ItemsControl ItemsSource="{Binding Fields}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border BorderBrush="#EEE" BorderThickness="0,0,0,1" Padding="2,8"
-                                                Visibility="{Binding IsVisible, Converter={StaticResource BoolVis}}">
-                                            <Grid>
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="180" />
-                                                    <ColumnDefinition Width="*" />
-                                                </Grid.ColumnDefinitions>
-
-                                                <!-- label + tooltip (help) -->
-                                                <StackPanel Grid.Column="0" ToolTip="{Binding Help}">
-                                                    <TextBlock Text="{Binding Label}" FontWeight="Bold" VerticalAlignment="Center" />
-                                                    <TextBlock Text="{Binding Key}" Foreground="Gray" FontSize="11" />
-                                                </StackPanel>
-
-                                                <!-- numeric: slider + editable box (int or float) -->
-                                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                                    <StackPanel.Style>
-                                                        <Style TargetType="StackPanel">
-                                                            <Setter Property="Visibility" Value="Collapsed" />
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding Type}" Value="int">
-                                                                    <Setter Property="Visibility" Value="Visible" />
-                                                                </DataTrigger>
-                                                                <DataTrigger Binding="{Binding Type}" Value="float">
-                                                                    <Setter Property="Visibility" Value="Visible" />
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </StackPanel.Style>
-                                                    <Slider Width="220" VerticalAlignment="Center"
-                                                            Minimum="{Binding Min}" Maximum="{Binding Max}"
-                                                            TickFrequency="{Binding Step}"
-                                                            Value="{Binding Num, Mode=TwoWay}" />
-                                                    <TextBox Width="96" Margin="10,0,0,0" VerticalAlignment="Center"
-                                                             Text="{Binding ValueText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                                                </StackPanel>
-
-                                                <!-- bool -->
-                                                <CheckBox Grid.Column="1" VerticalAlignment="Center"
-                                                          IsChecked="{Binding Bool, Mode=TwoWay}">
-                                                    <CheckBox.Style>
-                                                        <Style TargetType="CheckBox">
-                                                            <Setter Property="Visibility" Value="Collapsed" />
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding Type}" Value="bool">
-                                                                    <Setter Property="Visibility" Value="Visible" />
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </CheckBox.Style>
-                                                </CheckBox>
-
-                                                <!-- enum -->
-                                                <ComboBox Grid.Column="1" Width="200" HorizontalAlignment="Left"
-                                                          VerticalAlignment="Center"
-                                                          ItemsSource="{Binding Options}"
-                                                          SelectedItem="{Binding Str, Mode=TwoWay}">
-                                                    <ComboBox.Style>
-                                                        <Style TargetType="ComboBox">
-                                                            <Setter Property="Visibility" Value="Collapsed" />
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding Type}" Value="enum">
-                                                                    <Setter Property="Visibility" Value="Visible" />
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </ComboBox.Style>
-                                                </ComboBox>
-
-                                                <!-- text -->
-                                                <TextBox Grid.Column="1" Width="260" HorizontalAlignment="Left"
-                                                         VerticalAlignment="Center"
-                                                         Text="{Binding Str, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
-                                                    <TextBox.Style>
-                                                        <Style TargetType="TextBox">
-                                                            <Setter Property="Visibility" Value="Collapsed" />
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding Type}" Value="text">
-                                                                    <Setter Property="Visibility" Value="Visible" />
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </TextBox.Style>
-                                                </TextBox>
-                                            </Grid>
-                                        </Border>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </StackPanel>
-                    </ScrollViewer>
-                </Grid>
-            </TabItem>
-
-            <!-- Settings: paths shown; editing/wiring in later milestones. -->
-            <TabItem Header="Settings">
-                <StackPanel Margin="16">
-                    <TextBlock Text="Settings" FontSize="18" FontWeight="Bold" />
-                    <TextBlock Margin="0,10,0,0" Text="Content root:" FontWeight="Bold" />
-                    <TextBlock Text="{Binding RootPath}" TextWrapping="Wrap" Foreground="#333" />
-                    <TextBlock Margin="0,10,0,0" Foreground="Gray"
-                               Text="Game path, bundled runtime and log folder settings are configured here in L5+." />
                 </StackPanel>
-            </TabItem>
-        </TabControl>
-    </DockPanel>
+            </Border>
+
+            <!-- page region (fills) -->
+            <Grid>
+                <v:DashboardView Margin="22,18" Visibility="{Binding ShowDashboard, Converter={StaticResource BoolVis}}" />
+                <v:ModsView Margin="22,18" Visibility="{Binding ShowMods, Converter={StaticResource BoolVis}}" />
+                <v:SettingsView Margin="22,18" Visibility="{Binding ShowSettings, Converter={StaticResource BoolVis}}" />
+            </Grid>
+        </DockPanel>
+    </Grid>
 </Window>

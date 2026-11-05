@@ -1,0 +1,147 @@
+<UserControl x:Class="LeafItAlone.Launcher.Views.SettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <UserControl.Resources>
+
+        <!-- Segmented theme choice: a pill that fills with the accent when selected. -->
+        <Style x:Key="SegmentRadio" TargetType="RadioButton">
+            <Setter Property="FontFamily" Value="{DynamicResource AppFont}" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="Bd" CornerRadius="8" Padding="16,7" Margin="0,0,8,0"
+                                Background="{DynamicResource SurfaceAltBrush}"
+                                BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AccentBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource OnAccentBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Accent swatch: a color disc with a selection ring when it matches the accent. -->
+        <Style x:Key="AccentSwatch" TargetType="RadioButton">
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Margin" Value="0,0,10,0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Grid Width="30" Height="30">
+                            <Ellipse Fill="{TemplateBinding Background}" />
+                            <Ellipse x:Name="Ring" Stroke="{DynamicResource TextPrimaryBrush}" StrokeThickness="2"
+                                     Margin="-4" Visibility="Collapsed" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Ring" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel MaxWidth="820" Margin="4,2,10,4">
+
+            <TextBlock Text="Launcher preferences" Style="{StaticResource PageTitle}" />
+            <TextBlock Margin="0,4,0,16" Style="{StaticResource SecondaryText}"
+                       Text="Appearance and path settings for the launcher itself. These persist to settings.json and take effect immediately - they never change what is applied to the game." />
+
+            <!-- Appearance -->
+            <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                <StackPanel>
+                    <TextBlock Text="Appearance" Style="{StaticResource SectionTitle}" />
+
+                    <TextBlock Margin="0,12,0,4" Text="Theme" FontWeight="SemiBold" />
+                    <StackPanel Orientation="Horizontal">
+                        <RadioButton Style="{StaticResource SegmentRadio}" GroupName="theme" Content="Light"
+                                     Command="{Binding SelectThemeCommand}" CommandParameter="light"
+                                     IsChecked="{Binding ThemeChoice, Converter={StaticResource Eq}, ConverterParameter=light, Mode=OneWay}" />
+                        <RadioButton Style="{StaticResource SegmentRadio}" GroupName="theme" Content="Dark"
+                                     Command="{Binding SelectThemeCommand}" CommandParameter="dark"
+                                     IsChecked="{Binding ThemeChoice, Converter={StaticResource Eq}, ConverterParameter=dark, Mode=OneWay}" />
+                        <RadioButton Style="{StaticResource SegmentRadio}" GroupName="theme" Content="System"
+                                     Command="{Binding SelectThemeCommand}" CommandParameter="system"
+                                     IsChecked="{Binding ThemeChoice, Converter={StaticResource Eq}, ConverterParameter=system, Mode=OneWay}" />
+                    </StackPanel>
+
+                    <TextBlock Margin="0,16,0,4" Text="Accent color" FontWeight="SemiBold" />
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <RadioButton Style="{StaticResource AccentSwatch}" Background="#3FA34D"
+                                     ToolTip="Leaf green" Command="{Binding SelectAccentCommand}" CommandParameter="#3FA34D"
+                                     IsChecked="{Binding AccentChoice, Converter={StaticResource Eq}, ConverterParameter=#3FA34D, Mode=OneWay}" />
+                        <RadioButton Style="{StaticResource AccentSwatch}" Background="#0E9F9F"
+                                     ToolTip="Teal" Command="{Binding SelectAccentCommand}" CommandParameter="#0E9F9F"
+                                     IsChecked="{Binding AccentChoice, Converter={StaticResource Eq}, ConverterParameter=#0E9F9F, Mode=OneWay}" />
+                        <RadioButton Style="{StaticResource AccentSwatch}" Background="#2E7BD6"
+                                     ToolTip="Blue" Command="{Binding SelectAccentCommand}" CommandParameter="#2E7BD6"
+                                     IsChecked="{Binding AccentChoice, Converter={StaticResource Eq}, ConverterParameter=#2E7BD6, Mode=OneWay}" />
+                        <RadioButton Style="{StaticResource AccentSwatch}" Background="#6E56CF"
+                                     ToolTip="Violet" Command="{Binding SelectAccentCommand}" CommandParameter="#6E56CF"
+                                     IsChecked="{Binding AccentChoice, Converter={StaticResource Eq}, ConverterParameter=#6E56CF, Mode=OneWay}" />
+                        <TextBox Width="110" Margin="12,0,0,0" VerticalAlignment="Center"
+                                 ToolTip="Any #RRGGBB" Text="{Binding AccentChoice, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Paths -->
+            <Border Style="{StaticResource Card}">
+                <StackPanel>
+                    <TextBlock Text="Paths" Style="{StaticResource SectionTitle}" />
+
+                    <!-- Content root -->
+                    <TextBlock Margin="0,12,0,2" Text="Content root" FontWeight="SemiBold" />
+                    <TextBlock Style="{StaticResource MutedText}" Text="{Binding RootPath}" />
+                    <DockPanel Margin="0,8,0,0" LastChildFill="True">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Button Content="Browse…" Style="{StaticResource SecondaryButtonStyle}" Margin="8,0,0,0"
+                                    Command="{Binding BrowseContentRootCommand}" />
+                            <Button Content="Auto" Style="{StaticResource GhostButtonStyle}" Margin="8,0,0,0"
+                                    Command="{Binding ClearContentRootCommand}" />
+                        </StackPanel>
+                        <TextBox Text="{Binding ContentRootOverride, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                 ToolTip="Leave blank to auto-detect (walk up from the executable)" />
+                    </DockPanel>
+
+                    <!-- Game exe -->
+                    <TextBlock Margin="0,18,0,2" Text="Game executable" FontWeight="SemiBold" />
+                    <TextBlock Style="{StaticResource MutedText}"
+                               Text="{Binding GameExeDisplay}" />
+                    <DockPanel Margin="0,8,0,0" LastChildFill="True">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Button Content="Browse…" Style="{StaticResource SecondaryButtonStyle}" Margin="8,0,0,0"
+                                    Command="{Binding BrowseGameExeCommand}" />
+                            <Button Content="Auto" Style="{StaticResource GhostButtonStyle}" Margin="8,0,0,0"
+                                    Command="{Binding ClearGameExeCommand}" />
+                        </StackPanel>
+                        <TextBox Text="{Binding GameExeOverride, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                 ToolTip="Leave blank to use the path the safe-base recorded" />
+                    </DockPanel>
+
+                    <Separator Margin="0,18" />
+                    <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8"
+                               Text="Overrides only redirect the existing engines; nothing here patches or launches the game by itself." />
+                    <Button Content="Reset all settings to defaults" Style="{StaticResource DangerButtonStyle}"
+                            HorizontalAlignment="Left" Command="{Binding ResetSettingsCommand}" />
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

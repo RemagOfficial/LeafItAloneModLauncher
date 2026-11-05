@@ -335,6 +335,36 @@ release notes inside its README.
   `Format-SafeBaseOverlayIni` and `overlay/LeafOverlay.ini`; deleted the orphaned
   `content-mods/bag-capacity/apply-on-exit.ps1` and the `_applyHelper` path injection in
   `apply.ps1` (nothing launches the waiter any more). Rebuilt `version.dll` (MSVC, clean).
+- **`launcher/` L7 (Part A) — detect the mod runtime, guide the user.** Rather than bundle a
+  private Python (no network at build time, and the launcher is run via `dotnet`), the launcher
+  now *detects* it: `Services/PythonHealth.cs` runs the resolved interpreter once with a cheap
+  `python -c` probe (`sys.version_info` + `importlib.util.find_spec('UnityPy')`) and a **pure,
+  unit-tested classifier** maps the output to `Ok`/`WrongVersion`/`MissingUnityPy`/`NotInstalled`/`Broken`,
+  pinning Python 3.12 (3.14 segfaults UnityPy). `MainViewModel` probes on rescan, exposes the status
+  to a new Dashboard "Mod engine runtime" panel, and — when no usable runtime is found — raises a
+  guided `Views/PythonSetupWindow` popup linking the pinned download plus the exact
+  `python -m pip install UnityPy` command and a **Re-check** that re-probes without a restart.
+  `ApplyOrchestrator` gained a `PythonReady` gate so a Python-requiring apply is blocked with a
+  pointer to Setup instead of a doomed spawn (a mod with `requires.python` false is unaffected).
+  `PythonLocator` is documented as locate-only (existence ≠ validity). 91 headless checks pass.
+- **`content-mods/` L7 (Part B) — `more-leaves`, the second data-only mod (v1.1, scene-targeted).**
+  Densifies every leaf area so there are more leaves to rake. Ships only `mod.json` + `apply.ps1` +
+  `revert.ps1` + `patch_leaves.py` + `patch_catalog_null.py` + `more-leaves.json` — **zero launcher
+  code**, proving discovery is fully manifest-driven.
+  v1.0 patched the `coreassets_assets_areas*` `leavesCount`, which the in-game check proved is
+  metadata, not the spawner. Re-recon (`MODLOG.md`) found the real seed: a `Eternity.Gameplay.Leaves.Area`
+  layout MonoBehaviour baked into each gameplay **scene** bundle whose `initArgs[].leavesCount` scatter
+  leaves per area at load, with a top-level `leavesCount` pool proven to equal that sum. v1.1 therefore
+  scales each included `initArgs` count by the multiplier and recomputes the scene pool, across the three
+  gameplay scenes (castle/hometown/sakura; the title-screen menu scene and the stripped `coreprefabs_assets_actor`
+  template are left alone). `patch_leaves.py` refuses a bundle with no layout component and re-opens its
+  output to self-verify every value *and* the sum invariant. Like bag-capacity it edits bundles Addressables
+  CRC-checks, so `patch_catalog_null.py` nulls each scene's catalog CRC by its (uniquely-proven) on-disk
+  size; `apply.ps1` backs up the three scenes + `catalog.bin`, nulls, overwrites, re-verifies, registers
+  and rolls all back on failure — and reverts the stale v1.0 areas mod first, so applying over a prior
+  install self-heals. UnityPy round-trip was validated **offline on scene copies** (never the live game):
+  a hometown repack preserved all 6626 objects with zero loss and the 287 MB sakura repacks in ~10 s.
+  99 headless checks pass (the manifest-driven check now asserts the single-multiplier v1.1 schema).
 
 ## 1.0.0
 Initial release: the `overlay/` example.

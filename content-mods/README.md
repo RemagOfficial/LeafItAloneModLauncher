@@ -4,9 +4,17 @@ Small, focused mods that change what's *in the game* — bag sizes, leaf counts,
 seal times, textures, new achievements, whatever the bundle data can express.
 Each mod lives in its own folder and depends on [`../safe-base/`](../safe-base/README.md).
 
-**Status: the first one has shipped.** [`bag-capacity/`](bag-capacity/README.md)
+**Status: two have shipped.** [`bag-capacity/`](bag-capacity/README.md)
 (M6) doubles the four leaf-bag capacities and is the SDK's real end-to-end
-test. The rest of this folder's table is still planned.
+test. [`more-leaves/`](more-leaves/README.md) (L7) densifies every leaf area and
+is the launcher's proof that a second UnityPy mod is added purely from its
+`mod.json` (no app code). It is built and verified offline, awaiting the in-game
+check. Note its v1.0 targeted the wrong bundle: patching the
+`coreassets_assets_areas*` `leavesCount` had **no visible effect**, so in-game RE
+moved it (v1.1) to the real spawner — the `initArgs[].leavesCount` on the
+`Eternity.Gameplay.Leaves.Area` layout MonoBehaviour baked into the three
+gameplay **scene** bundles (castle / hometown / sakura). See that README for the
+data model. The rest of this folder's table is still planned.
 
 ## Why we can content-mod at all
 
@@ -135,7 +143,7 @@ Revert-Mod -Name "bag-capacity"     # restores byte-identical original + unregis
 |---|---|---|---|
 | `bag-capacity/` ✅ **(shipped, M6 + config M7 + launcher L2)** | Bigger leaf bags — configurable (multiplier or per-bag), editable in the launcher | `coreassets_assets_meta_*` | `capacity` on 4 MonoBehaviours (Small=50, Med=200, Big=500, Giant=800) |
 | `bag-speed/` | Faster seal & empty | `coreassets_assets_actors_*` | `sealingTime`, `emptyingDuration` on each `*LeafBag` |
-| `more-leaves/` | Denser levels | `coreassets_assets_areas*` | `leavesCount` per area |
+| `more-leaves/` ✅ **(built L7 v1.1, pending in-game check)** | Denser levels — a multiplier on every area's spawn count, editable in the launcher | `scenes_scenes_castle_*`, `scenes_scenes_hometown_*`, `scenes_scenes_sakura_*` | `initArgs[].leavesCount` (+ the scene `leavesCount` pool) on the `Eternity.Gameplay.Leaves.Area` layout MonoBehaviour in each gameplay scene |
 | `instant-seal/` | QoL: no seal delay | same as `bag-speed/` | set `sealingTime = 0.0` |
 | `custom-textures/` | Bag / tool skin swap | `visuals_assets_bags_*`, `visuals_assets_tools_*` | Texture2D replacement (UnityPy export → edit → import) |
 

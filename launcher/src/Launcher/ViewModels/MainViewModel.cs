@@ -26,8 +26,12 @@ public sealed class MainViewModel : ObservableObject
     private SafeBaseService? _safeBase;
     private SafeBaseInfo _safeBaseInfo = SafeBaseInfo.NotInstalled;
     private string _safeBaseVerdict = "";
+    private PythonHealthResult _python = new(PythonStatus.Unknown, "", "");
+    private bool _pythonPromptShown;
     private LauncherState _state = new();
     private string _statePath = "";
+    private AppConfig _config = new();
+    private string _configPath = "";
 
     public MainViewModel()
     {
@@ -42,11 +46,30 @@ public sealed class MainViewModel : ObservableObject
         InstallSafeBaseCommand = new RelayCommand(async _ => await InstallSafeBaseAsync(), _ => CanInstallSafeBase);
         UninstallAllCommand = new RelayCommand(async _ => await UninstallAllAsync(), _ => CanUninstallAll);
         RefreshStatusCommand = new RelayCommand(async _ => await RefreshStatusAsync(), _ => !IsBusy && _safeBase is not null);
+        PythonSetupCommand = new RelayCommand(_ => RequestPythonSetup?.Invoke(this, EventArgs.Empty));
+
+        // L9: nav + settings commands.
+        SelectSectionCommand = new RelayCommand(p => SelectSection(p));
+        BrowseContentRootCommand = new RelayCommand(_ => RequestBrowseContentRoot?.Invoke(this, EventArgs.Empty));
+        BrowseGameExeCommand = new RelayCommand(_ => RequestBrowseGameExe?.Invoke(this, EventArgs.Empty));
+        ClearContentRootCommand = new RelayCommand(_ => { ContentRootOverride = ""; });
+        ClearGameExeCommand = new RelayCommand(_ => { GameExeOverride = ""; });
+        ResetSettingsCommand = new RelayCommand(_ => ResetSettings());
+        SelectThemeCommand = new RelayCommand(p => { if (p is string s) ThemeChoice = s; });
+        SelectAccentCommand = new RelayCommand(p => { if (p is string s) AccentChoice = s; });
+        ClearLogCommand = new RelayCommand(_ => { LogLines.Clear(); Log("output cleared"); });
 
         _runner.LineReceived += AppendLog;   // fires on a worker thread; marshalled in AppendLog
 
+        // Load the app's own preferences before the first scan: the theme is already
+        // applied by App.OnStartup, but the content-root override must be in place so
+        // Rescan() can honour it, and the Settings page binds to these values.
+        _configPath = AppConfig.DefaultPath();
+        _config = AppConfig.Load(_configPath);
+
         Rescan();
     }
+
 
     public ObservableCollection<ConfigEditorViewModel> Editors { get; } = new();
     public ObservableCollection<string> LogLines { get; } = new();
@@ -64,10 +87,10 @@ public sealed class MainViewModel : ObservableObject
     private string _rootPath = "";
     public string RootPath { get => _rootPath; set => Set(ref _rootPath, value); }
 
-    /// <summary>Interpreter handed to <c>apply.ps1 -Python</c> (empty until resolved).</summary>
-    public string PythonPath => _ops.PythonPath ?? "";
-
     public int PendingCount => Editors.Count(e => e.IsPending);
+
+    /// <summary>Drives the header's pending chip (a count badge only shows when non-zero).</summary>
+    public bool HasPending => PendingCount > 0;
 
     /// <summary>One-line summary the Dashboard shows on the Apply &amp; Launch button area.</summary>
     public string ChangeSummary => PendingCount == 0
@@ -126,6 +149,221 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand InstallSafeBaseCommand { get; }
     public RelayCommand UninstallAllCommand { get; }
     public RelayCommand RefreshStatusCommand { get; }
+    public RelayCommand PythonSetupCommand { get; }
+
+    // ---- L9: navigation + app settings ----
+
+    public RelayCommand SelectSectionCommand { get; }
+    public RelayCommand BrowseContentRootCommand { get; }
+    public RelayCommand BrowseGameExeCommand { get; }
+    public RelayCommand ClearContentRootCommand { get; }
+    public RelayCommand ClearGameExeCommand { get; }
+    public RelayCommand ResetSettingsCommand { get; }
+    public RelayCommand SelectThemeCommand { get; }
+    public RelayCommand SelectAccentCommand { get; }
+    public RelayCommand ClearLogCommand { get; }
+
+    /// <summary>Raised when the Settings page wants a folder picker (the View owns the dialog).</summary>
+    public event EventHandler? RequestBrowseContentRoot;
+    /// <summary>Raised when the Settings page wants a file picker for the game exe.</summary>
+    public event EventHandler? RequestBrowseGameExe;
+
+    private Section _section = Section.Dashboard;
+
+    /// <summary>Which page the nav rail shows. Setting it refreshes the Show* flags + title.</summary>
+    public Section SelectedSection
+    {
+        get => _section;
+        set
+        {
+            if (!Set(ref _section, value)) return;
+            OnPropertyChanged(nameof(ShowDashboard));
+            OnPropertyChanged(nameof(ShowMods));
+            OnPropertyChanged(nameof(ShowSettings));
+            OnPropertyChanged(nameof(PageTitle));
+            OnPropertyChanged(nameof(IsDashboardChecked));
+            OnPropertyChanged(nameof(IsModsChecked));
+            OnPropertyChanged(nameof(IsSettingsChecked));
+        }
+    }
+
+    private void SelectSection(object? parameter)
+    {
+        if (parameter is Section s) SelectedSection = s;
+        else if (parameter is string str && Enum.TryParse(str, out Section parsed)) SelectedSection = parsed;
+    }
+
+    // Page visibility flags (bound to the three views) + nav-checked flags.
+    public bool ShowDashboard => _section == Section.Dashboard;
+    public bool ShowMods => _section == Section.Mods;
+    public bool ShowSettings => _section == Section.Settings;
+    public bool IsDashboardChecked => _section == Section.Dashboard;
+    public bool IsModsChecked => _section == Section.Mods;
+    public bool IsSettingsChecked => _section == Section.Settings;
+
+    public string PageTitle => _section switch
+    {
+        Section.Mods => "Mods",
+        Section.Settings => "Settings",
+        _ => "Dashboard",
+    };
+
+    /// <summary>Theme token (light/dark/system). Changing it re-applies the palette live and persists.</summary>
+    public string ThemeChoice
+    {
+        get => _config.Theme;
+        set
+        {
+            if (_config.Theme == value) return;
+            _config.Theme = value;
+            ApplyAndSaveTheme();
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>Accent as #RRGGBB. Changing it re-shades the accent live and persists.</summary>
+    public string AccentChoice
+    {
+        get => _config.Accent;
+        set
+        {
+            if (string.IsNullOrWhiteSpace(value) || !IsHex(value)) return;   // ignore partial typing
+            value = NormalizeHex(value);
+            if (_config.Accent == value) return;
+            _config.Accent = value;
+            ApplyAndSaveTheme();
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>Content root the launcher was pointed at (empty = auto-detect). Editing re-scans.</summary>
+    public string ContentRootOverride
+    {
+        get => _config.ContentRootOverride;
+        set
+        {
+            value ??= "";
+            if (_config.ContentRootOverride == value) return;
+            _config.ContentRootOverride = value;
+            SaveConfig();
+            Log(string.IsNullOrEmpty(value)
+                ? "[settings] content root: auto-detect"
+                : $"[settings] content root override -> {value}");
+            Rescan();
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>Game exe the launcher should start (empty = safe-base manifest). Editing persists.</summary>
+    public string GameExeOverride
+    {
+        get => _config.GameExeOverride;
+        set
+        {
+            value ??= "";
+            if (_config.GameExeOverride == value) return;
+            _config.GameExeOverride = value;
+            SaveConfig();
+            Log(string.IsNullOrEmpty(value)
+                ? "[settings] game exe: from safe-base manifest"
+                : $"[settings] game exe override -> {value}");
+            RaiseGameExeDisplay();
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>The manifest-detected game exe (or empty), for the Settings page's "current" line.</summary>
+    public string DetectedGameExe => GameLauncher.ResolveGameExe() ?? "";
+
+    /// <summary>What Launch will actually run: the override if set + present, else the manifest exe.</summary>
+    public string GameExeDisplay =>
+        !string.IsNullOrWhiteSpace(_config.GameExeOverride) && System.IO.File.Exists(_config.GameExeOverride)
+            ? _config.GameExeOverride
+            : (DetectedGameExe);
+
+    public bool HasContentRootOverride => !string.IsNullOrWhiteSpace(_config.ContentRootOverride);
+    public bool HasGameExeOverride => !string.IsNullOrWhiteSpace(_config.GameExeOverride);
+
+    private void ApplyAndSaveTheme()
+    {
+        ThemeManager.Apply(_config.Theme, _config.Accent);
+        SaveConfig();
+        OnPropertyChanged(nameof(AccentChoice));
+    }
+
+    private void ResetSettings()
+    {
+        _config.Theme = AppConfig.ThemeSystem;
+        _config.Accent = AppConfig.DefaultAccent;
+        _config.ContentRootOverride = "";
+        _config.GameExeOverride = "";
+        SaveConfig();
+        ThemeManager.Apply(_config.Theme, _config.Accent);
+        OnPropertyChanged(nameof(ThemeChoice));
+        OnPropertyChanged(nameof(AccentChoice));
+        OnPropertyChanged(nameof(ContentRootOverride));
+        OnPropertyChanged(nameof(GameExeOverride));
+        RaiseOverrideFlags();
+        RaiseGameExeDisplay();
+        Log("[settings] reset to defaults");
+        Rescan();
+    }
+
+    private void SaveConfig()
+    {
+        try { _config.Save(_configPath); }
+        catch (Exception ex) { Log("settings save failed: " + ex.Message); }
+        RaiseOverrideFlags();
+    }
+
+    private void RaiseOverrideFlags()
+    {
+        OnPropertyChanged(nameof(HasContentRootOverride));
+        OnPropertyChanged(nameof(HasGameExeOverride));
+    }
+
+    private void RaiseGameExeDisplay()
+    {
+        OnPropertyChanged(nameof(DetectedGameExe));
+        OnPropertyChanged(nameof(GameExeDisplay));
+    }
+
+    private static bool IsHex(string s) =>
+        s.Length == 7 && s[0] == '#' &&
+        System.Text.RegularExpressions.Regex.IsMatch(s[1..], "^[0-9a-fA-F]{6}$");
+
+    private static string NormalizeHex(string s) => s.Trim().ToUpperInvariant();
+
+
+    // ---- L7: Python runtime detection + guided setup ----
+
+    /// <summary>
+    /// Raised when the launcher wants the Setup guide shown - automatically the first time a
+    /// probe finds no usable Python, and on demand from the Dashboard button / popup re-check.
+    /// The View subscribes and opens the dialog on the UI thread, keeping the VM engine-agnostic.
+    /// </summary>
+    public event EventHandler? RequestPythonSetup;
+
+    /// <summary>Interpreter handed to <c>apply.ps1 -Python</c> (empty until resolved).</summary>
+    public string PythonPath => _ops.PythonPath ?? "";
+
+    /// <summary>Latest validated state of the interpreter (exists AND imports UnityPy).</summary>
+    public PythonStatus PythonState => _python.Status;
+
+    /// <summary>True when the interpreter can drive apply.ps1 (UnityPy present, any version).</summary>
+    public bool IsPythonReady => _python.ReadyForApply;
+
+    /// <summary>True once we know the runtime is not ready - shows the Setup call-to-action.</summary>
+    public bool PythonNeedsSetup => _python.Status is not (PythonStatus.Unknown or PythonStatus.Ok);
+
+    /// <summary>One-line description of the current Python state for the Dashboard.</summary>
+    public string PythonStatusText => PythonHealth.Describe(_python);
+
+    /// <summary>The pinned interpreter download page, surfaced in the popup.</summary>
+    public string PythonDownloadUrl => PythonHealth.DownloadUrl;
+
+    /// <summary>The UnityPy install command, surfaced (and copyable) in the popup.</summary>
+    public string PythonPipCommand => PythonHealth.PipCommand;
 
     // Apply is offered when the selection has something to push to the game; Revert
     // only when it is currently applied. All gated on not being mid-operation.
@@ -153,7 +391,8 @@ public sealed class MainViewModel : ObservableObject
     public void Rescan()
     {
         Log("Scanning for mods...");
-        if (!_locator.TryLocate())
+        var start = string.IsNullOrWhiteSpace(_config.ContentRootOverride) ? null : _config.ContentRootOverride;
+        if (!_locator.TryLocate(start))
         {
             Editors.Clear();
             RootPath = "";
@@ -172,6 +411,7 @@ public sealed class MainViewModel : ObservableObject
         // The engine folder (safe-base/ or tools/) holds install/status/uninstall-all.
         _safeBase = new SafeBaseService(_runner, _locator.SafeBaseDir);
         RefreshSafeBaseState();
+        RaiseGameExeDisplay();
 
         var result = _discovery.Discover(_locator.ModsRoot!);
         foreach (var err in result.Errors) Log("[manifest error] " + err);
@@ -186,14 +426,12 @@ public sealed class MainViewModel : ObservableObject
         }
         SelectedEditor = Editors.FirstOrDefault();
 
-        // Resolve the interpreter for apply.ps1 now that the root is known (L7 will
-        // ship a bundled runtime/py; until then this finds the system Python).
+        // Locate the interpreter for apply.ps1, then validate it asynchronously (L7):
+        // "does it exist AND import UnityPy". We do not embed a Python, so a not-ready
+        // result raises RequestPythonSetup once to guide the user to install it.
         _ops.PythonPath = PythonLocator.Resolve(_locator.Root);
         OnPropertyChanged(nameof(PythonPath));
-        if (string.IsNullOrEmpty(_ops.PythonPath))
-            Log("[warn] no Python found - apply will use apply.ps1's own default, or set LEAF_PYTHON.");
-        else
-            Log($"python for apply: {_ops.PythonPath}");
+        _ = ProbePythonAsync();
 
         StatusText = Editors.Count == 0
             ? $"No mod manifests found at {RootPath}"
@@ -360,7 +598,7 @@ public sealed class MainViewModel : ObservableObject
             Log("[launch] game already running - not starting another instance");
             return;
         }
-        var (ok, message) = GameLauncher.Launch();
+        var (ok, message) = GameLauncher.Launch(_config.GameExeOverride);
         StatusText = ok ? "Game launched. Play safe (offline)." : message;
         Log("[launch] " + message);
     }
@@ -440,6 +678,7 @@ public sealed class MainViewModel : ObservableObject
     {
         _safeBaseInfo = _safeBase is null ? SafeBaseInfo.NotInstalled : _safeBase.Read();
         RaiseSafeBaseProps();
+        RaiseGameExeDisplay();
     }
 
     private void RaiseSafeBaseProps()
@@ -465,9 +704,55 @@ public sealed class MainViewModel : ObservableObject
 
     private string PythonOrDefault() => string.IsNullOrEmpty(_ops.PythonPath) ? "apply.ps1 default" : _ops.PythonPath!;
 
+    /// <summary>
+    /// Validate the resolved interpreter off the UI thread (one cheap <c>python -c</c> probe).
+    /// The result is applied back on the dispatcher so the bound Dashboard + popup are happy.
+    /// </summary>
+    private async System.Threading.Tasks.Task ProbePythonAsync()
+    {
+        var result = await PythonHealth.ProbeAsync(_runner, _ops.PythonPath);
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher is not null && !dispatcher.CheckAccess())
+        {
+            // Fire-and-forget on purpose: the probe runs off the UI thread and posts its
+            // result back. Discard the DispatcherOperation so the awaitable isn't ignored.
+            _ = dispatcher.BeginInvoke(new Action(() => ApplyPythonResult(result)));
+            return;
+        }
+        ApplyPythonResult(result);
+    }
+
+    private void ApplyPythonResult(PythonHealthResult result)
+    {
+        _python = result;
+        _ops.PythonReady = result.ReadyForApply;
+        OnPropertyChanged(nameof(PythonState));
+        OnPropertyChanged(nameof(IsPythonReady));
+        OnPropertyChanged(nameof(PythonNeedsSetup));
+        OnPropertyChanged(nameof(PythonStatusText));
+        OnPropertyChanged(nameof(PythonPath));
+        Log("[python] " + PythonHealth.Describe(result));
+
+        // Guide the user the first time we discover there is no usable runtime (L7).
+        if (!result.ReadyForApply && !_pythonPromptShown)
+        {
+            _pythonPromptShown = true;
+            RequestPythonSetup?.Invoke(this, EventArgs.Empty);
+        }
+        RefreshCommands();
+    }
+
+    /// <summary>Re-run the probe on demand (the popup's "Re-check"). Clears the once-guard.</summary>
+    public void RecheckPython()
+    {
+        _pythonPromptShown = false;
+        _ = ProbePythonAsync();
+    }
+
     private void RaisePendingCount()
     {
         OnPropertyChanged(nameof(PendingCount));
+        OnPropertyChanged(nameof(HasPending));
         OnPropertyChanged(nameof(ChangeSummary));
     }
 

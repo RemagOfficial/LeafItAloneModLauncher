@@ -31,6 +31,16 @@ public static class GameLauncher
     public static string? ResolveGameExe() => ResolveGameExeFrom(ManifestPath);
 
     /// <summary>
+    /// L9: a user override wins when it names a file that exists; otherwise fall back to
+    /// the safe-base manifest. So a stale/deleted override never blocks launching - it just
+    /// reverts to the normal source of truth.
+    /// </summary>
+    public static string? ResolveGameExe(string? overrideExe) =>
+        !string.IsNullOrWhiteSpace(overrideExe) && File.Exists(overrideExe)
+            ? overrideExe
+            : ResolveGameExe();
+
+    /// <summary>
     /// Read + validate a <c>manifest.json</c> at an explicit path (the real method just
     /// passes the safe-base location). Separated so the parsing is unit-testable without
     /// touching the user's live manifest.
@@ -52,12 +62,13 @@ public static class GameLauncher
     }
 
     /// <summary>
-    /// Launch the game. Returns a (success, human message) pair for the status bar and log.
-    /// Never throws.
+    /// Launch the game. An optional user <paramref name="exeOverride"/> (L9 Settings) wins
+    /// when it exists; otherwise the safe-base manifest's <c>gameExe</c> is used. Returns a
+    /// (success, human message) pair for the status bar and log. Never throws.
     /// </summary>
-    public static (bool Ok, string Message) Launch()
+    public static (bool Ok, string Message) Launch(string? exeOverride = null)
     {
-        var exe = ResolveGameExe();
+        var exe = ResolveGameExe(exeOverride);
         if (exe is null)
             return (false, "could not find the game - safe-base manifest.json has no live gameExe (install safe-base, or the game may have moved).");
 

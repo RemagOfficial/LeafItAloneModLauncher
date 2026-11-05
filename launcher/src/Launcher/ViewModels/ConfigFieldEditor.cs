@@ -20,7 +20,10 @@ public sealed class ConfigFieldEditor : ObservableObject
 {
     private readonly ConfigEditorViewModel _owner;
 
-    private double _num;
+    // Authoritative value for numeric fields. It MAY sit outside the manifest's
+    // [Min,Max] - the textbox is allowed to set that on purpose (see ValueText) -
+    // while the slider only ever sees a clamped view of it (see Num).
+    private double _value;
     private bool _bool;
     private string _str = "";
     private bool _isVisible = true;
@@ -45,37 +48,63 @@ public sealed class ConfigFieldEditor : ObservableObject
     public double Step => Field.Step ?? (Field.Type == FieldTypes.Int ? 1 : 0.1);
     public bool IsInt => Field.Type == FieldTypes.Int;
 
-    /// <summary>Number editors: <see cref="Num"/> drives the slider, <see cref="ValueText"/> the box.</summary>
+    /// <summary>
+    /// Slider-bound VIEW of the value: always clamped into the manifest's safe
+    /// [Min,Max] (and rounded for ints) so the thumb can never pass its stops. The
+    /// authoritative value is <see cref="_value"/>, which <see cref="ValueText"/> may
+    /// set outside that range on purpose - the slider then just pins to the nearest bound.
+    /// Dragging the slider writes a clamped value back into <see cref="_value"/>.
+    /// </summary>
     public double Num
     {
-        get => _num;
+        get => CoerceForSlider(_value);
+        set => Commit(value, fromSlider: true);
+    }
+
+    /// <summary>
+    /// Text-box view: shows the real (possibly out-of-range) value and lets the user
+    /// commit any number EXCEPT zero - a safe slider band plus free entry beyond it.
+    /// Non-numeric, non-finite, or values that round to 0 are rejected by snapping the
+    /// box back to the last good value (the slider is never affected past its stops).
+    /// </summary>
+    public string ValueText
+    {
+        get => _value.ToString(IsInt ? "0" : "0.###", CultureInfo.CurrentCulture);
         set
         {
-            var clamped = Clamp(value);
-            if (IsInt) clamped = Math.Round(clamped, MidpointRounding.AwayFromZero);
-            if (Set(ref _num, clamped))
+            if (!TryParseNumber(value, out var parsed) || !double.IsFinite(parsed))
             {
-                OnPropertyChanged(nameof(ValueText));
-                _owner.OnFieldChanged(this);
+                OnPropertyChanged(nameof(ValueText));          // not a number: revert
+                return;
             }
+            if (IsInt) parsed = Math.Round(parsed, MidpointRounding.AwayFromZero);
+            if (parsed == 0)
+            {
+                OnPropertyChanged(nameof(ValueText));          // zero is not allowed: revert
+                return;
+            }
+            Commit(parsed, fromSlider: false);                 // out-of-range is intentional
         }
     }
 
-    public string ValueText
+    /// <summary>Shared write path. Slider input is clamped to the safe band; box input is
+    /// stored as given (out-of-range allowed) after int rounding. Refreshes BOTH bindings so
+    /// dragging the box pins the slider to the edge and dragging the slider rewrites the box.</summary>
+    private void Commit(double v, bool fromSlider)
     {
-        get => _num.ToString(IsInt ? "0" : "0.###", CultureInfo.CurrentCulture);
-        set
-        {
-            if (double.TryParse(value, NumberStyles.Number, CultureInfo.CurrentCulture, out var parsed)
-                || double.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out parsed))
-            {
-                Num = parsed;   // routes through clamp/round + change notification
-            }
-            else
-            {
-                OnPropertyChanged(nameof(ValueText));   // revert the box to the last good value
-            }
-        }
+        if (fromSlider) v = Clamp(v);
+        if (IsInt) v = Math.Round(v, MidpointRounding.AwayFromZero);
+        if (!Set(ref _value, v)) return;
+        OnPropertyChanged(nameof(ValueText));
+        OnPropertyChanged(nameof(Num));
+        _owner.OnFieldChanged(this);
+    }
+
+    private double CoerceForSlider(double v)
+    {
+        var s = Clamp(v);
+        if (IsInt) s = Math.Round(s, MidpointRounding.AwayFromZero);
+        return s;
     }
 
     public bool Bool
@@ -104,6 +133,10 @@ public sealed class ConfigFieldEditor : ObservableObject
         return v;
     }
 
+    private static bool TryParseNumber(string s, out double v)
+        => double.TryParse(s, NumberStyles.Number, CultureInfo.CurrentCulture, out v)
+        || double.TryParse(s, NumberStyles.Number, CultureInfo.InvariantCulture, out v);
+
     /// <summary>Populate the editor from a live value (or the manifest default when absent).</summary>
     public void SetValue(JsonNode? node) => Apply(node ?? Field.Default);
 
@@ -113,11 +146,11 @@ public sealed class ConfigFieldEditor : ObservableObject
         {
             case FieldTypes.Int:
             case FieldTypes.Float:
-                // Clamp on load too: a pre-existing live value outside the manifest
-                // range (e.g. an old >4-digit size) would otherwise render the slider
-                // past its stops; it snaps into range and any save brings it legal.
-                _num = Clamp(ReadNumber(node));
-                if (IsInt) _num = Math.Round(_num, MidpointRounding.AwayFromZero);
+                // Keep the stored value AS-IS (out-of-range allowed). The slider clamps
+                // for display via Num's getter, so a value past Max just pins the thumb to
+                // the end while the box (and the saved config) still hold the real number.
+                _value = ReadNumber(node);
+                if (IsInt) _value = Math.Round(_value, MidpointRounding.AwayFromZero);
                 OnPropertyChanged(nameof(Num));
                 OnPropertyChanged(nameof(ValueText));
                 break;
@@ -137,8 +170,8 @@ public sealed class ConfigFieldEditor : ObservableObject
     /// <summary>Serialize the editor's current value back to a JSON node for the given type.</summary>
     public JsonNode ToNode() => Type switch
     {
-        FieldTypes.Int => JsonValue.Create((int)Math.Round(_num, MidpointRounding.AwayFromZero))!,
-        FieldTypes.Float => JsonValue.Create(_num)!,
+        FieldTypes.Int => JsonValue.Create((int)Math.Round(_value, MidpointRounding.AwayFromZero))!,
+        FieldTypes.Float => JsonValue.Create(_value)!,
         FieldTypes.Bool => JsonValue.Create(_bool)!,
         _ => JsonValue.Create(_str)!,
     };

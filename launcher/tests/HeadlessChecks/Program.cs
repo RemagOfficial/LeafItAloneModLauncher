@@ -2,6 +2,8 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
+using System.Windows.Media;
 using LeafItAlone.Launcher.Models;
 using LeafItAlone.Launcher.Services;
 using LeafItAlone.Launcher.ViewModels;
@@ -19,19 +21,27 @@ internal static class Program
 
     private static int Main()
     {
-        Console.WriteLine("Launcher L1/L2/L3/L4/L5 headless checks");
+        Console.WriteLine("Launcher L1/L2/L3/L4/L5/L6/L7/L9 headless checks");
         Console.WriteLine("================================");
 
         CheckRepoAndDiscovery();
+        CheckSecondModManifestDriven();
         CheckEnvPathExpansion();
         CheckConfigStoreRoundTrip();
         CheckConfigEditorRoundTrip();
+        CheckConfigFieldDecouple();
         CheckPendingLifecycle();
         CheckOrchestratorArgs();
         CheckSequencePlan();
         CheckGameExeResolution();
         CheckSafeBaseLifecycle();
         CheckLogColorization();
+        CheckPythonHealth();
+        CheckAppConfigRoundTrip();
+        CheckContentRootOverride();
+        CheckGameExeOverride();
+        CheckThemeMath();
+        CheckThemeTokenParity();
         ProcessRunnerCheck().GetAwaiter().GetResult();
         OrchestratorRunCheck().GetAwaiter().GetResult();
 
@@ -81,6 +91,60 @@ internal static class Program
         Assert(bag.Manifest.Requires.SafeBase && bag.Manifest.Requires.GameNotRunning && bag.Manifest.Requires.Python,
             "requires all true", bag.RequiresSummary);
         Assert(bag.ApplyScript.EndsWith("apply.ps1"), "apply script resolves", bag.ApplyScript);
+    }
+
+    /// <summary>
+    /// L7's core claim: a second UnityPy mod is added purely by dropping a folder with a
+    /// mod.json next to bag-capacity - no launcher code changed. Discovers the REAL
+    /// content-mods tree and asserts more-leaves shows up, ordered after bag-capacity, with
+    /// its manifest fully parsed. Safe: reads manifests only, never touches the game.
+    /// </summary>
+    private static void CheckSecondModManifestDriven()
+    {
+        var locator = new RepoLocator();
+        if (!locator.TryLocate(AppContext.BaseDirectory) || locator.ModsRoot is null)
+        {
+            Assert(false, "RepoLocator found mods root for L7", locator.LastError ?? "null");
+            return;
+        }
+
+        var result = new ModDiscovery().Discover(locator.ModsRoot!);
+        Assert(result.Errors.Count == 0, "L7: no manifest parse errors", string.Join("; ", result.Errors));
+
+        var leaves = result.Mods.FirstOrDefault(m => m.Id == "more-leaves");
+        Assert(leaves is not null, "more-leaves discovered from its manifest alone",
+            "ids: " + string.Join(", ", result.Mods.Select(m => m.Id)));
+        if (leaves is null) return;
+
+        Assert(leaves.Version == "1.3.1", "more-leaves version 1.3.1", leaves.Version);
+        Assert(leaves.Order == 20, "more-leaves order 20", leaves.Order.ToString());
+
+        // Discovery sorts by order then name: bag-capacity (10) must come before more-leaves (20).
+        var ids = result.Mods.Select(m => m.Id).ToList();
+        int bagIdx = ids.IndexOf("bag-capacity");
+        int leavesIdx = ids.IndexOf("more-leaves");
+        Assert(bagIdx >= 0 && leavesIdx > bagIdx, "applied in manifest order (bag before leaves)",
+            $"bag@{bagIdx} leaves@{leavesIdx} of [{string.Join(",", ids)}]");
+
+        Assert(leaves.Manifest.Requires.SafeBase && leaves.Manifest.Requires.GameNotRunning
+               && leaves.Manifest.Requires.Python, "more-leaves requires all true", leaves.RequiresSummary);
+        Assert(leaves.ApplyScript.EndsWith("apply.ps1"), "more-leaves apply script resolves", leaves.ApplyScript);
+
+        // v1.2 is per-world: an integer density scale for each of the three worlds
+        // (nested keys scales.<world>) plus a float scatter radius. Keys use dotted
+        // paths so ConfigStore reads/writes them inside the live config's "scales" object.
+        Assert(leaves.Manifest.Config.Fields.Count == 4, "more-leaves has 4 config fields",
+            leaves.Manifest.Config.Fields.Count.ToString());
+        var ht = leaves.Manifest.Config.Fields.FirstOrDefault(f => f.Key == "scales.hometown");
+        Assert(ht is not null && ht.Type == FieldTypes.Int && ht.When is null
+               && Equals(ht.Default?.GetValue<int>(), 2),
+            "more-leaves scales.hometown is a plain int default 2",
+            $"{ht?.Type ?? "missing"} def={ht?.Default?.ToString() ?? "none"} when={(ht?.When is null ? "none" : "gated")}");
+        var radius = leaves.Manifest.Config.Fields.FirstOrDefault(f => f.Key == "scatterRadius");
+        Assert(radius is not null && radius.Type == FieldTypes.Float
+               && Equals(radius.Default?.GetValue<double>(), 0.6),
+            "more-leaves scatterRadius is a float default 0.6",
+            $"{radius?.Type ?? "missing"} def={radius?.Default?.ToString() ?? "none"}");
     }
 
     private static void CheckEnvPathExpansion()
@@ -182,6 +246,64 @@ internal static class Program
                     "$null = Get-Content -LiteralPath '" + path + "' -Raw | ConvertFrom-Json; exit 0"
                 }, timeout: TimeSpan.FromSeconds(20)).GetAwaiter().GetResult().ExitCode;
             Assert(exit == 0, "ConvertFrom-Json parses the saved config", $"ps exit {exit}");
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    /// <summary>
+    /// The slider and the text box are DECOUPLED: the slider stays pinned to the manifest's
+    /// safe [Min,Max] band, while the box accepts any value except 0 (and rejects non-numeric
+    /// / non-finite / values that round to zero). The authoritative value can sit out of range;
+    /// the slider just shows it clamped, and the saved JSON keeps the real number.
+    /// Uses bag-capacity sizes.small (int, min 0, max 9999).
+    /// </summary>
+    private static void CheckConfigFieldDecouple()
+    {
+        var loc = new RepoLocator();
+        if (!loc.TryLocate(AppContext.BaseDirectory)) { Assert(false, "decouple test located content root", loc.LastError ?? ""); return; }
+        var bag = new ModDiscovery().Discover(loc.ModsRoot!).Mods.FirstOrDefault(m => m.Id == "bag-capacity");
+        if (bag is null) { Assert(false, "decouple test found bag-capacity"); return; }
+
+        var dir = Path.Combine(Path.GetTempPath(), "leaf-dec-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "bag-capacity.json");
+        try
+        {
+            File.WriteAllText(path, "{\"mode\":\"sizes\",\"multiplier\":2.0,\"sizes\":{\"small\":100}}");
+            bag.Manifest.ConfigPath = path;
+            var editor = new ConfigEditorViewModel(bag);
+            var small = editor.Fields.First(f => f.Key == "sizes.small");
+            Assert(small.Min == 0 && small.Max == 9999, "sizes.small safe band is 0..9999", $"{small.Min}..{small.Max}");
+
+            // Box accepts an out-of-range value; slider view clamps, the raw value is kept.
+            small.ValueText = "50000";
+            Assert(small.ValueText == "50000", "box keeps out-of-range 50000", small.ValueText);
+            Assert(small.Num == 9999, "slider clamps the view to max 9999", small.Num.ToString());
+            Assert(Equals(small.ToNode().GetValue<int>(), 50000), "saved node keeps the real 50000", small.ToNode().ToString());
+
+            // Box rejects 0 (reverts to the last good value), and non-numeric too.
+            small.ValueText = "0";
+            Assert(small.ValueText == "50000", "box rejects 0, keeps last good", small.ValueText);
+            small.ValueText = "abc";
+            Assert(small.ValueText == "50000", "box rejects non-numeric, keeps last good", small.ValueText);
+
+            // Int rounding inside the band.
+            small.ValueText = "200.6";
+            Assert(small.ValueText == "201" && small.Num == 201, "box rounds 200.6 -> 201 int", small.ValueText + "/" + small.Num);
+
+            // The slider path always clamps into the safe band and rewrites the box.
+            small.Num = 40000;
+            Assert(small.Num == 9999 && small.ValueText == "9999", "slider clamps 40000 -> 9999", small.ValueText);
+            small.Num = 0;   // 0 IS reachable via the slider (a valid min); only the box forbids it
+            Assert(small.ValueText == "0", "slider can still set the safe min 0", small.ValueText);
+
+            // Saving writes the real (out-of-range) number to disk.
+            small.ValueText = "12345";
+            editor.Enabled = true;
+            editor.Save();
+            var saved = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+            Assert(Equals(saved["sizes"]?["small"]?.GetValue<int>(), 12345), "save persists out-of-range 12345",
+                   saved["sizes"]?["small"]?.ToString() ?? "<null>");
         }
         finally { try { Directory.Delete(dir, true); } catch { } }
     }
@@ -480,6 +602,233 @@ internal static class Program
             var got = LogColor.Classify(line);
             Assert(got == want, what, $"got {got} for: {line}");
         }
+    }
+
+    /// <summary>
+    /// L7 Python detection: file-existence is not enough - the interpreter must be 3.12 AND
+    /// import UnityPy. These exercise the pure classifier over synthetic probe output, the
+    /// Ready-for-apply mapping (a wrong version with UnityPy still patches), and the
+    /// no-interpreter short-circuit that never spawns a process.
+    /// </summary>
+    private static void CheckPythonHealth()
+    {
+        PythonHealthResult Classify(int exit, params string[] lines) =>
+            PythonHealth.Interpret(new ProcessResult(exit, false), lines);
+
+        var ok = Classify(0, "LEAF_PYVER=3.12.10", "LEAF_UNITYPY=yes");
+        Assert(ok.Status == PythonStatus.Ok && ok.ReadyForApply, "3.12 + UnityPy -> Ok, ready", ok.ToString());
+
+        var wrong = Classify(0, "LEAF_PYVER=3.14.0", "LEAF_UNITYPY=yes");
+        Assert(wrong.Status == PythonStatus.WrongVersion && wrong.ReadyForApply,
+            "other version + UnityPy -> WrongVersion but usable", wrong.ToString());
+
+        var nopy = Classify(0, "LEAF_PYVER=3.12.10", "LEAF_UNITYPY=no");
+        Assert(nopy.Status == PythonStatus.MissingUnityPy && !nopy.ReadyForApply,
+            "UnityPy not importable -> MissingUnityPy, not ready", nopy.ToString());
+
+        var broken = Classify(0, "some unrelated output");
+        Assert(broken.Status == PythonStatus.Broken && !broken.ReadyForApply,
+            "no version marker -> Broken", broken.ToString());
+
+        var fault = PythonHealth.Interpret(new ProcessResult(-1, false, "Failed to start"), Array.Empty<string>());
+        Assert(fault.Status == PythonStatus.Broken, "spawn fault -> Broken", fault.ToString());
+
+        // No interpreter: ProbeAsync short-circuits without spawning anything.
+        var none = PythonHealth.ProbeAsync(new ProcessRunner(), "").GetAwaiter().GetResult();
+        Assert(none.Status == PythonStatus.NotInstalled && !none.ReadyForApply,
+            "empty path -> NotInstalled (no spawn)", none.ToString());
+
+        // The probe must actually ask for both signals.
+        var args = PythonHealth.BuildProbeArgs();
+        Assert(args.Count == 2 && args[0] == "-c"
+               && args[1].Contains("UnityPy") && args[1].Contains("LEAF_PYVER"),
+            "probe args ask for version + UnityPy", string.Join(" ", args));
+    }
+
+    /// <summary>
+    /// L9 settings store: values round-trip through settings.json, a corrupt file falls
+    /// back to defaults (never throws across startup), and a hand-edited file is normalized
+    /// (bad theme -> system, bad accent -> house green).
+    /// </summary>
+    private static void CheckAppConfigRoundTrip()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "leaf-l9cfg-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "settings.json");
+        try
+        {
+            var cfg = new AppConfig
+            {
+                Theme = AppConfig.ThemeDark,
+                Accent = "#0E9F9F",
+                ContentRootOverride = @"D:\some\root",
+                GameExeOverride = @"D:\game\Leaf it Alone.exe",
+            };
+            cfg.Save(path);
+
+            var back = AppConfig.Load(path);
+            Assert(back.Theme == AppConfig.ThemeDark, "theme round-trips (dark)", back.Theme);
+            Assert(back.Accent == "#0E9F9F", "accent round-trips", back.Accent);
+            Assert(back.ContentRootOverride == @"D:\some\root", "content-root override round-trips", back.ContentRootOverride);
+            Assert(back.GameExeOverride == @"D:\game\Leaf it Alone.exe", "game-exe override round-trips", back.GameExeOverride);
+
+            // Corrupt file -> defaults, not a throw.
+            File.WriteAllText(path, "{ not json at all ");
+            var recovered = AppConfig.Load(path);
+            Assert(recovered.Theme == AppConfig.ThemeSystem && recovered.Accent == AppConfig.DefaultAccent,
+                "corrupt settings -> defaults", recovered.Theme + "/" + recovered.Accent);
+
+            // Normalization: an invalid theme/accent in an otherwise-good file is clamped.
+            File.WriteAllText(path, "{\"theme\":\"NEON\",\"accent\":\"zzz\",\"contentRootOverride\":\"\"}");
+            var norm = AppConfig.Load(path);
+            Assert(norm.Theme == AppConfig.ThemeSystem, "bad theme normalized to system", norm.Theme);
+            Assert(norm.Accent == AppConfig.DefaultAccent, "bad accent normalized to default", norm.Accent);
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    /// <summary>
+    /// L9 content-root override seam: TryLocate honors an explicit start dir (a temp folder
+    /// holding content-mods beside a safe-base/tools marker) instead of only walking up, and
+    /// a folder without the markers is rejected so a bad override surfaces, not mis-locates.
+    /// </summary>
+    private static void CheckContentRootOverride()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "leaf-l9root-" + Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(dir, "modset");
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root, "content-mods"));
+            Directory.CreateDirectory(Path.Combine(root, "safe-base"));
+            Directory.CreateDirectory(Path.Combine(dir, "empty"));
+
+            var located = new RepoLocator();
+            Assert(located.TryLocate(root), "explicit override root with markers is located", located.LastError ?? "");
+            Assert(string.Equals(located.Root, root, StringComparison.OrdinalIgnoreCase),
+                "override root resolved to the given dir", located.Root ?? "null");
+            Assert(located.ModsRoot is not null && Directory.Exists(located.ModsRoot), "override ModsRoot exists", located.ModsRoot ?? "null");
+
+            var none = new RepoLocator();
+            Assert(!none.TryLocate(Path.Combine(dir, "empty")), "a folder without markers is rejected");
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    /// <summary>
+    /// L9 game-exe override: an override naming a real file wins; an empty or stale override
+    /// falls back to the manifest resolution (the same value the no-arg call returns), so a
+    /// deleted override never blocks launching.
+    /// </summary>
+    private static void CheckGameExeOverride()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "leaf-l9exe-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var realExe = Path.Combine(dir, "Leaf it Alone.exe");
+            File.WriteAllText(realExe, "stub");
+
+            Assert(Equals(GameLauncher.ResolveGameExe(realExe), realExe),
+                "existing override exe wins", GameLauncher.ResolveGameExe(realExe) ?? "null");
+
+            string baseline = GameLauncher.ResolveGameExe() ?? "(null)";
+            Assert(Equals(GameLauncher.ResolveGameExe("") ?? "(null)", baseline),
+                "empty override falls back to manifest", GameLauncher.ResolveGameExe("") ?? "null");
+
+            var stale = Path.Combine(dir, "gone.exe");
+            Assert(Equals(GameLauncher.ResolveGameExe(stale) ?? "(null)", baseline),
+                "stale (missing) override falls back to manifest", GameLauncher.ResolveGameExe(stale) ?? "null");
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    /// <summary>
+    /// L9 theme helpers (pure): hex parsing, the lighten/darken accent shades, the readable
+    /// on-accent foreground, and system->light/dark resolution. These drive the live swap.
+    /// </summary>
+    private static void CheckThemeMath()
+    {
+        var green = ThemeManager.ParseHex("#3FA34D");
+        Assert(green.R == 0x3F && green.G == 0xA3 && green.B == 0x4D, "ParseHex reads #3FA34D", $"{green.R},{green.G},{green.B}");
+
+        var bad = ThemeManager.ParseHex("nonsense");
+        Assert(bad == (Color)ColorConverter.ConvertFromString(AppConfig.DefaultAccent)!,
+            "ParseHex falls back to default on junk", bad.ToString());
+
+        var lighter = ThemeManager.Lighten(green, 0.5);
+        Assert(lighter.G > green.G && lighter.G <= 255, "Lighten moves toward white", lighter.ToString());
+        var darker = ThemeManager.Darken(green, 0.5);
+        Assert(darker.G < green.G, "Darken moves toward black", darker.ToString());
+
+        Assert(ThemeManager.OnAccent(green) == Colors.White, "white text on the green accent");
+        Assert(ThemeManager.OnAccent(Colors.Yellow) != Colors.White, "dark text on a bright (yellow) accent");
+        Assert(ThemeManager.OnAccent(Colors.Black) == Colors.White, "white text on black");
+
+        Assert(ThemeManager.ResolveEffective(AppConfig.ThemeLight) == AppConfig.ThemeLight, "light resolves to light");
+        Assert(ThemeManager.ResolveEffective(AppConfig.ThemeDark) == AppConfig.ThemeDark, "dark resolves to dark");
+        var sys = ThemeManager.ResolveEffective(AppConfig.ThemeSystem);
+        Assert(sys is AppConfig.ThemeLight or AppConfig.ThemeDark, "system resolves to a concrete theme", sys);
+    }
+
+    /// <summary>
+    /// The whole live-swap relies on Light.xaml and Dark.xaml defining the SAME brush keys
+    /// (only the values differ). A missing key would silently drop a color after a swap, so
+    /// assert the key sets match by scanning the palette source files.
+    /// </summary>
+    private static void CheckThemeTokenParity()
+    {
+        var themeDir = FindThemeDir();
+        if (themeDir is null)
+        {
+            Assert(false, "located the Theme/ folder for parity check", "not found from " + AppContext.BaseDirectory);
+            return;
+        }
+
+        var light = ExtractKeys(Path.Combine(themeDir, "Light.xaml"));
+        var dark = ExtractKeys(Path.Combine(themeDir, "Dark.xaml"));
+
+        Assert(light.Count > 0 && dark.Count > 0, "both palettes define keys", $"light={light.Count} dark={dark.Count}");
+        var onlyLight = light.Except(dark).ToList();
+        var onlyDark = dark.Except(light).ToList();
+        Assert(onlyLight.Count == 0 && onlyDark.Count == 0, "Light and Dark define the same brush keys",
+            $"onlyLight=[{string.Join(",", onlyLight)}] onlyDark=[{string.Join(",", onlyDark)}]");
+
+        // The accent + text + surface keys the styles rely on must actually be present.
+        foreach (var required in new[] { "AccentBrush", "WindowBackgroundBrush", "SurfaceBrush", "TextPrimaryBrush", "ConsoleBgBrush" })
+            Assert(light.Contains(required), $"light palette defines {required}", "");
+    }
+
+    private static System.Collections.Generic.HashSet<string> ExtractKeys(string xamlPath)
+    {
+        var set = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+        if (!File.Exists(xamlPath)) return set;
+        foreach (Match m in Regex.Matches(File.ReadAllText(xamlPath), "x:Key=\"([^\"]+)\""))
+            set.Add(m.Groups[1].Value);
+        return set;
+    }
+
+    /// <summary>Walk up from the test binary to the Theme/ source folder (compiled dicts are not loose files).</summary>
+    private static string? FindThemeDir()
+    {
+        // The Theme/ folder is a source tree under src/Launcher/Theme, which is a sibling
+        // of tests/ - not an ancestor of the test binary. So at each ancestor we probe the
+        // known source layouts relative to it, not just a direct Theme/ child.
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            foreach (var rel in new[]
+                     {
+                 "Theme",
+                 Path.Combine("src", "Launcher", "Theme"),
+                 Path.Combine("launcher", "src", "Launcher", "Theme"),
+                     })
+            {
+                var candidate = Path.Combine(dir.FullName, rel);
+                if (File.Exists(Path.Combine(candidate, "Light.xaml"))) return candidate;
+            }
+            dir = dir.Parent;
+        }
+        return null;
     }
 
     private static ModInfo FakeMod(string folder, string apply, string revert, bool python)

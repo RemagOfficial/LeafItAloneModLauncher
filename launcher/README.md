@@ -15,7 +15,13 @@ unchanged.
 
 ## Status
 
-Milestones **L1–L5** are complete.
+Milestones **L1–L7** and **L9** are complete; **L8** (distribution polish) is pending.
+
+> **L9** is the visual overhaul + functional settings: a live Light/Dark theme with an
+> accent picker, a left nav rail (Dashboard / Mods / Settings), and a Settings page that
+> actually works — theme/accent applied live and persisted, plus content-root and
+> game-exe path overrides. All hand-built WPF styles (no theme packages, so the offline
+> build constraint holds). See the "Look & settings (L9)" section below.
 
 **L1** — WPF app that builds and runs; the subprocess `ProcessRunner` (PowerShell
 `-File`, `ArgumentList` quoting, streamed Output log, timeout + exit code); mod
@@ -25,7 +31,12 @@ refactored to ship one; a read-only mod list.
 **L2** — the **schema-driven editor**: selecting a mod renders one control per
 manifest field by declared `type` (slider+box for int/float, checkbox for bool,
 combo for enum, text box for text), with `when`-gated visibility (e.g. the bag
-sizes only show in `mode: sizes`). Edits write the live
+sizes only show in `mode: sizes`). For numeric fields the **slider and the text
+box are decoupled**: the slider stays bound to the manifest's safe `min`/`max`
+band, while the box accepts any value except 0 (it rejects blank/non-numeric/zero
+and snaps back), so users can push a value past the slider's range on purpose — the
+slider then just pins to the nearest bound and the saved JSON keeps the real number.
+Edits write the live
 `%LOCALAPPDATA%\LeafItAloneSafe\<id>.json`, **preserving every key the schema does
 not mention** (`_comment`, `_applyHelper`, …). The enable toggle and applied-config
 SHA persist to `launcher/state.json`.
@@ -54,8 +65,51 @@ when present, and **Run full status** streams the full report and surfaces its
 `VERDICT:` line. Uninstall also clears every mod's applied marker so the badges stay
 honest.
 
-Still ahead: the overlay slimdown (L6), the **bundled Python runtime** (L7) and
-**distribution polish** (L8).
+**L6** — **overlay slimdown.** The in-game F8 bag editor is retired now that the
+launcher owns bag config: `leaf_overlay.cpp` keeps only the banner + one-shot
+preflight, the `[bageditor]` ini keys, `apply-on-exit.ps1` and the `_applyHelper`
+injection are gone, and `version.dll` is rebuilt. (Lives in `overlay/` +
+`safe-base/` + `content-mods/`, not the C# app.)
+
+**L7** — **mod-runtime detection + the second data-only mod.** Instead of bundling a
+private Python (no network at build time, and the launcher runs via `dotnet`), the
+launcher *detects* the engine runtime: `Services/PythonHealth.cs` probes the resolved
+interpreter once (version + whether `UnityPy` imports) with a pure, unit-tested
+classifier, the Dashboard shows a **"Mod engine runtime"** status panel, and when no
+usable Python 3.12 + UnityPy is found it opens a guided **setup popup** — the pinned
+download link, the exact `pip install UnityPy` command and a **Re-check** that re-probes
+without a restart. `ApplyOrchestrator` gates a Python-requiring apply on that probe.
+Part B adds **`more-leaves`** — a second UnityPy mod shipped purely as a `mod.json` +
+scripts (no launcher code) that densifies each area's `leavesCount`, proving discovery is
+fully manifest-driven. 100 headless checks pass.
+
+**L9** — **visual overhaul + functional settings.** The old per-mod scripts and stub
+Settings tab are gone from the UX: the window is now a **left nav rail** (brand mark,
+Dashboard / Mods / Settings, busy + pending indicators) over a header band, a page
+region, a collapsible dark **console** with a Clear affordance, and a slim status bar.
+Each page is its own `UserControl` (`Views/DashboardView`, `Views/ModsView`,
+`Views/SettingsView`); the schema-driven Mods editor moved into `ModsView` verbatim, so
+its behaviour is unchanged. Theming is entirely hand-written — `Theme/Light.xaml` and
+`Theme/Dark.xaml` define one shared set of **semantic brushes**, `Theme/Controls.xaml`
+supplies every control `Style`/`ControlTemplate` (rounded buttons, restyled slider /
+textbox / checkbox / combo / list / scrollbar, the nav item style) and references those
+brushes through `DynamicResource`. `ThemeManager` swaps the merged dictionary and
+re-derives the accent at runtime, so **Light/Dark and the accent (presets + custom hex)
+change live with no restart**; the console stays dark in both themes so log lines stay
+legible. `Services/AppConfig.cs` persists `theme`/`accent`/`contentRootOverride`/
+`gameExeOverride` to `launcher/settings.json` beside `state.json` (fail-safe load,
+normalising bad values). The Settings page wires that up: theme + accent pickers apply
+and save on click, a **content-root override** re-scan (`Rescan()` → `TryLocate(start)`)
+and a **game-exe override** feed the existing launch seam (`GameLauncher.Launch(exeOverride)`
+— override wins only if the file exists, else the safe-base manifest path). Path pickers
+use the in-box .NET 8 `OpenFolderDialog` / `OpenFileDialog` and are raised from the VM as
+events, opened in the code-behind (dialogs stay out of the VM, as with the Python popup).
+Five L9 headless checks cover the `AppConfig` round-trip, override-aware discovery,
+game-exe override resolution, the accent lighten/darken/on-accent math and Light↔Dark
+token parity; the full suite passes.
+
+Still ahead: **distribution polish** (L8 — README screenshots, honest AI/UnityPy/loader
+credits, a GitHub Releases zip, `um publish check`). Publishing stays the user's call.
 
 
 ## Layout
@@ -67,10 +121,15 @@ launcher/
                                locally installed 8.0 targeting packs
   src/Launcher/                the WPF app
     App.xaml / MainWindow.xaml
+    ThemeManager.cs            live theme/accent swap (merged-dictionary + derived brushes)
+    Theme/                     Light.xaml, Dark.xaml (semantic brushes) + Controls.xaml (styles)
+    Views/                     DashboardView / ModsView / SettingsView (UserControls),
+                               PythonSetupWindow, converters
     Models/                    ModManifest (+ ConfigField), ModInfo
-    Services/                  RepoLocator, ProcessRunner, ModDiscovery, EnvPaths
-    ViewModels/                MainViewModel + ObservableObject + RelayCommand
-  tests/HeadlessChecks/        a console harness (no game, no UI) for L1 checks
+    Services/                  RepoLocator, ProcessRunner, ModDiscovery, EnvPaths,
+                               GameLauncher, SafeBaseService, PythonHealth, AppConfig
+    ViewModels/                MainViewModel + ObservableObject + RelayCommand + Section
+  tests/HeadlessChecks/        a console harness (no game, no UI) for L1–L9 checks
 ```
 
 ## Build & run (dev)
@@ -99,6 +158,30 @@ dotnet run --project tests/HeadlessChecks
 Asserts discovery, the manifest round-trip, `%LOCALAPPDATA%` path expansion and the
 subprocess runner (exit code + streamed output). Exits non-zero on any failure, so
 it can gate the build.
+
+## Look & settings (L9)
+
+The UI is a **left nav rail** with three pages — **Dashboard** (Play first, then safe-base,
+mod engine runtime, tools), **Mods** (the schema-driven editor list + detail) and
+**Settings**. A collapsible dark console shows the streamed engine output; a status bar
+sits at the bottom.
+
+**Settings is functional:**
+
+- **Theme** — Light / Dark / System, plus an **accent** picker (green, teal, blue,
+  violet presets or a custom `#RRGGBB`). Every change applies **live** (no restart) and
+  persists to `launcher/settings.json`. `System` follows the OS app theme.
+- **Content root override** — point the launcher at a different `content-mods/` tree.
+  Browse (folder picker) or clear back to auto-detect; on change it re-scans and the
+  Mods page follows the new root. The resolved path is shown read-only.
+- **Game exe override** — launch a specific executable instead of the path safe-base
+  recorded. Browse (`*.exe`) or clear; an override only wins if the file exists,
+  otherwise it falls back to the manifest path.
+- **Reset to defaults** restores theme, accent and both overrides.
+
+Look is 100% hand-written WPF (no theme packages). If you add a control style, reference
+the semantic brushes by `DynamicResource` (never a hard-coded colour) so it re-themes on
+a swap; keep the console dark in both palettes.
 
 ## Publish (self-contained, for users)
 
@@ -153,4 +236,5 @@ Each entry in `config.fields` describes one editable value:
 The manifest only *describes* the config file; `apply.ps1` remains the source of
 truth for reading it, and the launcher preserves any keys the schema does not
 mention (`_comment`, `_applyHelper`, …). `content-mods/bag-capacity/mod.json` is the
-reference implementation.
+reference implementation and `content-mods/more-leaves/mod.json` is the second — added
+with **no launcher code**, which is the point of the manifest-driven design.
