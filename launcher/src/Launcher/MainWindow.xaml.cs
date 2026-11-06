@@ -19,6 +19,7 @@ namespace LeafItAlone.Launcher;
 public partial class MainWindow : Window
 {
     private bool _setupOpen;
+    private bool _whatsNewOpen;
 
     public MainWindow()
     {
@@ -29,7 +30,24 @@ public partial class MainWindow : Window
         vm.RequestBrowseContentRoot += (_, _) => BrowseContentRoot(vm);
         vm.RequestBrowseGameExe += (_, _) => BrowseGameExe(vm);
         vm.RequestTrustApproval = ShowTrustAsync;
+        vm.RequestWhatsNew = ShowWhatsNew;
+
+        // 2b: restore the last window size (AppConfig already clamped it to the
+        // minimum / larger default). The XAML values are just the design-time hint.
+        Width = vm.WindowWidth;
+        Height = vm.WindowHeight;
     }
+
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+    {
+        // Persist the size only for a normal (non-maximised) window; a maximised
+        // RestoreBounds is what the user would get next launch, and writing the
+        // maximised outer size would drift the window larger every session.
+        if (WindowState == WindowState.Normal && DataContext is MainViewModel vm)
+            vm.SaveWindowSize(Width, Height);
+        base.OnClosing(e);
+    }
+
 
     private Task<bool> ShowTrustAsync(ModSource source, RemoteModEntry entry)
     {
@@ -42,6 +60,23 @@ public partial class MainWindow : Window
         var sha = vm.Sources.FirstOrDefault(s => s.Key == source.Key)?.Source.LastSha ?? "";
         var win = new TrustInstallWindow(source, sha, entry) { Owner = this };
         return Task.FromResult(win.ShowDialog() == true);
+    }
+
+    // 2b: the What's-new seam. Runs on the dispatcher (the VM raises it from a
+    // startup continuation with no ConfigureAwait(false)), so ShowDialog is safe.
+    // Guarded so a duplicate raise never stacks a second window.
+    private void ShowWhatsNew(string title, string body)
+    {
+        if (_whatsNewOpen) return;
+        _whatsNewOpen = true;
+        try
+        {
+            new WhatsNewWindow(title, body) { Owner = this }.ShowDialog();
+        }
+        finally
+        {
+            _whatsNewOpen = false;
+        }
     }
 
     private void ShowPythonSetup(MainViewModel vm)

@@ -75,6 +75,10 @@ public sealed class MainViewModel : ObservableObject
         OpenRemoteModsFolderCommand = new RelayCommand(_ => OpenRemoteModsFolder());
         SetModsPageModeCommand = new RelayCommand(p => { if (p is string s) ModsPageMode = s; });
 
+        // 2b: self-update / diagnostics commands.
+        OpenUpdatePageCommand = new RelayCommand(_ => OpenUrl(UpdateUrl), _ => UpdateAvailable && !string.IsNullOrWhiteSpace(UpdateUrl));
+        ExportDiagnosticsCommand = new RelayCommand(async _ => await ExportDiagnosticsAsync(), _ => !IsBusy);
+
         _runner.LineReceived += AppendLog;   // fires on a worker thread; marshalled in AppendLog
 
         // Load the app's own preferences before the first scan: the theme is already
@@ -87,7 +91,14 @@ public sealed class MainViewModel : ObservableObject
         RebuildSourcesList();
 
         Rescan();
+
+        // 2b: kick off the non-critical network services (self-update check +
+        // first-run What's new) without blocking startup. Launched from the UI
+        // thread, so its awaits resume there (no ConfigureAwait(false)) and every
+        // property/binding update stays on the dispatcher.
+        _ = RunStartupServicesAsync();
     }
+
 
 
     public ObservableCollection<ConfigEditorViewModel> Editors { get; } = new();
@@ -129,6 +140,33 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand InstallRemoteCommand { get; private set; } = null!;
     public RelayCommand OpenRemoteModsFolderCommand { get; private set; } = null!;
 
+    // 2b: self-update download link + diagnostics bundle.
+    public RelayCommand OpenUpdatePageCommand { get; private set; } = null!;
+    public RelayCommand ExportDiagnosticsCommand { get; private set; } = null!;
+
+    /// <summary>The app version shown in Settings / about (from the assembly).</summary>
+    public string AppVersion => AppInfo.Version;
+
+    private bool _updateAvailable;
+    /// <summary>True when GitHub's latest release is newer than the installed version.</summary>
+    public bool UpdateAvailable { get => _updateAvailable; private set => Set(ref _updateAvailable, value); }
+
+    private string _updateVersionText = "";
+    /// <summary>e.g. "Update available: 1.1.0" (empty when up to date / unknown).</summary>
+    public string UpdateVersionText { get => _updateVersionText; private set => Set(ref _updateVersionText, value); }
+
+    private string _updateUrl = "";
+    /// <summary>The release page to open when the user clicks the update chip.</summary>
+    public string UpdateUrl { get => _updateUrl; private set => Set(ref _updateUrl, value); }
+
+    /// <summary>
+    /// 2b: raised once per app version to show the "What's new" panel. The View owns
+    /// the window (same seam pattern as <see cref="RequestTrustApproval"/>); null in
+    /// tests, in which case the panel is simply not shown but the version is still
+    /// marked seen so it never nags.
+    /// </summary>
+    public System.Action<string /*title*/, string /*markdown body*/>? RequestWhatsNew { get; set; }
+
     /// <summary>
     /// Raised when the trust modal (R5) needs to run before an install proceeds.
     /// The View owns the dialog and returns whether the user typed INSTALL.
@@ -153,6 +191,41 @@ public sealed class MainViewModel : ObservableObject
             Log($"[settings] allow non-default sources -> {(on ? "ON" : "OFF")}");
             RefreshSourcesCommand.RefreshCanExecute();
         }
+    }
+
+    /// <summary>
+    /// 2b: whether the output console is expanded. Bound two-way to the console
+    /// toggle. Persists so the window reopens the way the user left it; defaults to
+    /// collapsed for a clean first impression.
+    /// </summary>
+    public bool ConsoleExpanded
+    {
+        get => _config.ConsoleExpanded;
+        set
+        {
+            if (_config.ConsoleExpanded == value) return;
+            _config.ConsoleExpanded = value;
+            SaveConfig();
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>
+    /// 2b: window size. Restored from <c>settings.json</c> on startup and written
+    /// back once on close (not per resize tick). The View reads these in its ctor and
+    /// calls <see cref="SaveWindowSize"/> from <c>OnClosing</c>.
+    /// </summary>
+    public double WindowWidth => _config.WindowWidth;
+    public double WindowHeight => _config.WindowHeight;
+
+    /// <summary>2b: persist the window's current size; floored to the minimum by AppConfig.Normalize.</summary>
+    public void SaveWindowSize(double width, double height)
+    {
+        if (System.Math.Abs(_config.WindowWidth - width) < 1 && System.Math.Abs(_config.WindowHeight - height) < 1)
+            return;
+        _config.WindowWidth = width;
+        _config.WindowHeight = height;
+        SaveConfig();
     }
 
     /// <summary>The rate-limit line shown under the Browse tab (updated after each fetch).</summary>
@@ -1075,6 +1148,139 @@ public sealed class MainViewModel : ObservableObject
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             {
                 FileName = RepoLocator.RemoteModsRoot,
+                UseShellExecute = true,
+            });
+        }
+        catch (System.Exception ex) { Console.WriteLine("open folder failed: " + ex.Message); }
+    }
+
+    /// <summary>
+    /// 2b: the two non-critical startup services, run after the first scan so they
+    /// never delay the window. Started from the UI thread and awaited WITHOUT
+    /// ConfigureAwait(false), so the update properties and the What's-new seam all
+    /// land back on the dispatcher. Failures are logged, never thrown.
+    /// </summary>
+    private async System.Threading.Tasks.Task RunStartupServicesAsync()
+    {
+        try
+        {
+            var res = await new UpdateChecker().CheckAsync();
+            if (res.Known && res.UpdateAvailable)
+            {
+                UpdateAvailable = true;
+                UpdateVersionText = "Update available: " + res.LatestVersion;
+                UpdateUrl = res.Url;
+                OpenUpdatePageCommand.RefreshCanExecute();
+                Log("[update] a newer release is available: " + res.LatestVersion);
+            }
+            else if (res.Known)
+            {
+                Log($"[update] up to date (v{AppInfo.Version})");
+            }
+            else
+            {
+                Log("[update] check skipped (offline, or no releases published yet)");
+            }
+        }
+        catch (System.Exception ex) { Log("[update] check failed: " + ex.Message); }
+
+        await MaybeShowWhatsNewAsync();
+    }
+
+    /// <summary>
+    /// 2b: show the "What's new" panel the first time a given app version runs. Marks
+    /// the version seen once notes are retrieved (or the tag simply has no release),
+    /// so it never repeats; a network failure leaves it unseen to retry next launch
+    /// without ever spamming the user on the same successful run.
+    /// </summary>
+    private async System.Threading.Tasks.Task MaybeShowWhatsNewAsync()
+    {
+        var current = AppInfo.Version;
+        if (string.Equals(_config.LastWhatsNewVersion, current, System.StringComparison.OrdinalIgnoreCase))
+            return;
+        try
+        {
+            using var api = new GitHubApi();
+            var rel = await api.GetReleaseByTagAsync(AppInfo.Owner, AppInfo.Repo, AppInfo.TagFor(current));
+            if (rel is not null && !string.IsNullOrWhiteSpace(rel.Body))
+                RequestWhatsNew?.Invoke("What's new in " + current, rel.Body);
+            // Whether or not there were notes, this version has now been handled.
+            _config.LastWhatsNewVersion = current;
+            SaveConfig();
+        }
+        catch (System.Exception ex)
+        {
+            Log("[whatsnew] could not load release notes (will retry): " + ex.Message);
+        }
+    }
+
+    /// <summary>Open https URL / local path in the default handler (shell execute).</summary>
+    private static void OpenUrl(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return;
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = url,
+                UseShellExecute = true,
+            });
+        }
+        catch (System.Exception ex) { Console.WriteLine("open url failed: " + ex.Message); }
+    }
+
+    /// <summary>
+    /// 2b: build the diagnostics zip (settings + state + configs + remote manifests +
+    /// a generated about.txt, never any game file) and open the folder it landed in.
+    /// </summary>
+    private async System.Threading.Tasks.Task ExportDiagnosticsAsync()
+    {
+        var launcherDir = System.IO.Path.GetDirectoryName(_configPath) ?? ".";
+        var safeRoot = System.IO.Path.GetDirectoryName(launcherDir) ?? launcherDir;
+        try
+        {
+            var about = BuildAboutText();
+            // The zip write is quick but we keep the UI honest by yielding first.
+            var zipPath = await System.Threading.Tasks.Task.Run(() => DiagnosticsExporter.Export(safeRoot, about));
+            Log("[diagnostics] wrote " + zipPath);
+            OpenRemotePath(zipPath);
+        }
+        catch (System.Exception ex)
+        {
+            Log("[diagnostics] export failed: " + ex.Message);
+        }
+    }
+
+    private string BuildAboutText()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("Leaf it Alone Mod Launcher - diagnostics");
+        sb.AppendLine("generated: " + System.DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+        sb.AppendLine("app version: " + AppInfo.Version);
+        sb.AppendLine("os: " + System.Environment.OSVersion.VersionString + " (" + (System.Environment.Is64BitOperatingSystem ? "x64" : "x86") + ")");
+        sb.AppendLine("content root: " + (_locator.Root ?? "(not located)"));
+        sb.AppendLine("engine root: " + (_locator.EngineRoot ?? "(not located)"));
+        sb.AppendLine("safe-base: " + (_safeBaseInfo.Installed ? $"installed ({_safeBaseInfo.Milestone})" : "NOT installed"));
+        sb.AppendLine("python: " + PythonStatusText);
+        sb.AppendLine();
+        sb.AppendLine("mod sources:");
+        foreach (var s in Sources)
+            sb.AppendLine($"  - {s.Source.Url}  [{s.Source.RefName}]  lastSha={(s.Source.LastSha ?? "")}  trusted={s.Source.Trusted}");
+        sb.AppendLine();
+        sb.AppendLine("recent log:");
+        foreach (var line in System.Linq.Enumerable.Take(LogLines, 500))
+            sb.AppendLine("  " + line);
+        return sb.ToString();
+    }
+
+    /// <summary>Reveal a just-written file in its folder (shell execute on the parent).</summary>
+    private static void OpenRemotePath(string fullPath)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = System.IO.Path.GetDirectoryName(fullPath) ?? ".",
                 UseShellExecute = true,
             });
         }

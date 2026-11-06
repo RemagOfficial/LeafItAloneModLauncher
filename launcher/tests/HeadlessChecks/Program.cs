@@ -51,6 +51,11 @@ internal static class Program
         CheckLauncherStateRemoteRoundTrip();
         CheckGitBlobShaMatchesKnownVectors();
         CheckCompositeDiscoveryDeduplicates();
+        // 2b: version source, self-update compare and the diagnostics exporter's
+        // game-file deny-list. All offline.
+        CheckAppInfoVersion();
+        CheckVersionCompare();
+        CheckDiagnosticsZipExcludesGameFiles();
         ProcessRunnerCheck().GetAwaiter().GetResult();
         OrchestratorRunCheck().GetAwaiter().GetResult();
 
@@ -358,6 +363,90 @@ internal static class Program
             // The in-memory editors reflect the defaults too (UI stays in sync).
             var small = editor.Fields.First(f => f.Key == "sizes.small");
             Assert(small.Num == 100, "editor field shows default after reset", small.Num.ToString());
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    // ---- 2b: version source / self-update / patches / conflicts / diagnostics ----
+
+    /// <summary>The single version source must yield a non-empty, parseable number.</summary>
+    private static void CheckAppInfoVersion()
+    {
+        var v = AppInfo.Version;
+        Assert(!string.IsNullOrWhiteSpace(v), "AppInfo.Version is non-empty", $"\"{v}\"");
+        Assert(Version.TryParse(v, out _), "AppInfo.Version parses as a Version", v);
+        Assert(AppInfo.TagFor("1.2.3") == "v1.2.3", "AppInfo.TagFor prefixes v", AppInfo.TagFor("1.2.3"));
+    }
+
+    /// <summary>The pure version compare behind the self-update check: no network, no throw.</summary>
+    private static void CheckVersionCompare()
+    {
+        Assert(UpdateChecker.IsNewer("v1.1.0", "1.0.0", out _), "newer tag v1.1.0 > local 1.0.0");
+        Assert(!UpdateChecker.IsNewer("v1.0.0", "1.1.0", out _), "older tag v1.0.0 not newer than 1.1.0");
+        Assert(!UpdateChecker.IsNewer("v1.2", "1.2", out _), "v1.2 equals 1.2 (no false positive)");
+        Assert(!UpdateChecker.IsNewer("v1.2", "1.2.0", out _), "v1.2 equals 1.2.0 (missing field coerced)");
+        Assert(UpdateChecker.IsNewer("1.2.1", "1.2.0", out var parsed) && parsed.Build == 1, "1.2.1 newer, build parsed");
+        Assert(!UpdateChecker.IsNewer("garbage", "1.0.0", out _), "garbage tag -> no update");
+        Assert(!UpdateChecker.IsNewer("", "1.0.0", out _), "empty tag -> no update, no throw");
+    }
+
+    /// <summary>
+    /// The diagnostics bundle must refuse every game-derived file even when it sits where
+    /// the exporter would otherwise pick it up (e.g. a *.json under a backup/ or
+    /// mod-backups/ subtree inside the launcher folder), while keeping the safe inputs.
+    /// </summary>
+    private static void CheckDiagnosticsZipExcludesGameFiles()
+    {
+        // Direct deny-list assertions first (cheap, exact).
+        Assert(DiagnosticsExporter.IsDenied(@"C:\x\coreassets_assets_actors_abc.bundle"), "IsDenied rejects a .bundle");
+        Assert(DiagnosticsExporter.IsDenied(@"C:\x\aa\catalog.bin"), "IsDenied rejects catalog.bin");
+        Assert(DiagnosticsExporter.IsDenied(@"C:\x\mod-backups\stuff.json"), "IsDenied rejects files under mod-backups");
+        Assert(DiagnosticsExporter.IsDenied(@"C:\x\backup\state.json"), "IsDenied rejects files under backup");
+        Assert(DiagnosticsExporter.IsDenied(@"C:\x\sharedassets0.assets"), "IsDenied rejects .assets");
+        Assert(!DiagnosticsExporter.IsDenied(@"C:\x\launcher\settings.json"), "IsDenied keeps settings.json");
+        Assert(!DiagnosticsExporter.IsDenied(@"C:\x\remote-mods\k\m\mod.json"), "IsDenied keeps a mod.json");
+
+        var dir = Path.Combine(Path.GetTempPath(), "leaf-diag-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(dir, "launcher"));
+            Directory.CreateDirectory(Path.Combine(dir, "launcher", "mod-backups"));
+            Directory.CreateDirectory(Path.Combine(dir, "remote-mods", "src__repo", "somemod"));
+
+            File.WriteAllText(Path.Combine(dir, "launcher", "settings.json"), "{\"theme\":\"dark\"}");
+            File.WriteAllText(Path.Combine(dir, "launcher", "state.json"), "{}");
+            File.WriteAllText(Path.Combine(dir, "launcher", "crash.log"), "boom");
+            // A game-derived JSON planted INSIDE the launcher tree - the pattern scan for
+            // *.json would grab it; only the deny-list can stop it.
+            File.WriteAllText(Path.Combine(dir, "launcher", "mod-backups", "captured-scene.json"), "{\"game\":true}");
+            // A live per-mod config at the safe root.
+            File.WriteAllText(Path.Combine(dir, "bag-capacity.json"), "{\"multiplier\":2.0}");
+            // A remote mod manifest (provenance) + a fake bundle beside it that must never ship.
+            File.WriteAllText(Path.Combine(dir, "remote-mods", "src__repo", "somemod", "mod.json"), "{\"id\":\"somemod\"}");
+            File.WriteAllText(Path.Combine(dir, "remote-mods", "src__repo", "somemod", "data.bundle"), "GAMEFILE");
+            // A catalog.bin at the root (would be excluded by name if ever considered).
+            File.WriteAllText(Path.Combine(dir, "catalog.bin"), "GAMECATALOG");
+
+            var zipPath = DiagnosticsExporter.Export(dir, "about text here");
+            Assert(File.Exists(zipPath), "diagnostics zip written", zipPath);
+
+            using var archive = System.IO.Compression.ZipFile.OpenRead(zipPath);
+            var names = archive.Entries.Select(e => e.FullName.Replace('\\', '/')).ToList();
+
+            Assert(names.Any(n => n.EndsWith("launcher/settings.json")), "zip includes launcher/settings.json", string.Join("|", names));
+            Assert(names.Any(n => n.EndsWith("launcher/state.json")), "zip includes launcher/state.json");
+            Assert(names.Any(n => n.EndsWith("launcher/crash.log")), "zip includes launcher/crash.log");
+            Assert(names.Any(n => n.StartsWith("configs/") && n.EndsWith("bag-capacity.json")), "zip includes the live config");
+            Assert(names.Any(n => n.EndsWith("mod.json")), "zip includes a remote mod.json");
+            Assert(names.Any(n => n == "about.txt"), "zip includes about.txt");
+
+            // No game file, backup-tree file, catalog or bundle may appear anywhere.
+            Assert(!names.Any(n => n.Contains(".bundle")), "zip excludes every .bundle", string.Join("|", names.Where(n => n.Contains(".bundle"))));
+            Assert(!names.Any(n => n.Contains("catalog.bin", StringComparison.OrdinalIgnoreCase)), "zip excludes catalog.bin");
+            Assert(!names.Any(n => n.Contains("mod-backups", StringComparison.OrdinalIgnoreCase)
+                                   || n.Contains("/backup/", StringComparison.OrdinalIgnoreCase)
+                                   || n.StartsWith("backup/", StringComparison.OrdinalIgnoreCase)), "zip excludes backup-tree files",
+                string.Join("|", names.Where(n => n.Contains("backup", StringComparison.OrdinalIgnoreCase))));
         }
         finally { try { Directory.Delete(dir, true); } catch { } }
     }

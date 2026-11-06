@@ -210,6 +210,22 @@
                 </StackPanel>
             </Border>
 
+            <!-- About & maintenance (2b): the app version (single source: the assembly) and the
+                 one-click diagnostics bundle. The exporter provably refuses every game file. -->
+            <Border Style="{StaticResource Card}" Margin="0,14,0,0">
+                <StackPanel>
+                    <TextBlock Text="About &amp; maintenance" Style="{StaticResource SectionTitle}" />
+                    <TextBlock Margin="0,6,0,0" FontSize="13">
+                        <Run Text="Leaf it Alone Mod Launcher" /><Run Text="  ·  version " /><Run Text="{Binding AppVersion, Mode=OneWay}" FontWeight="SemiBold" />
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource MutedText}" Margin="0,4,0,10" TextWrapping="Wrap"
+                               Text="If something misbehaves, export a diagnostics bundle to send with a bug report. It collects the launcher's settings, state, per-mod configs and the remote mod manifests - and never any game files (bundles, catalog.bin or backups are refused by design)." />
+                    <Button Content="Export diagnostics" Style="{StaticResource SecondaryButtonStyle}"
+                            HorizontalAlignment="Left" Command="{Binding ExportDiagnosticsCommand}"
+                            ToolTip="Writes a zip to the launcher's diagnostics folder and opens it." />
+                </StackPanel>
+            </Border>
+
         </StackPanel>
     </ScrollViewer>
 </UserControl>

@@ -16,6 +16,19 @@
             <TextBlock Margin="0,4,0,16" Style="{StaticResource SecondaryText}"
                        Text="The launcher drives the tested PowerShell + UnityPy engines and the safe-base. Nothing here is re-implemented in C#." />
 
+            <!-- 2b: update banner (same signal as the header chip). Non-blocking; opens the
+                 release page in the browser. The launcher never replaces its own exe. -->
+            <Border Background="{DynamicResource ChipBgBrush}" CornerRadius="8" Padding="12,10" Margin="0,0,0,14"
+                    Visibility="{Binding UpdateAvailable, Converter={StaticResource BoolVis}}">
+                <DockPanel LastChildFill="True">
+                    <Button DockPanel.Dock="Right" Content="Download" Style="{StaticResource GhostButtonStyle}"
+                            VerticalAlignment="Center" Margin="12,0,0,0"
+                            Command="{Binding OpenUpdatePageCommand}" />
+                    <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{DynamicResource ChipFgBrush}"
+                               Text="{Binding UpdateVersionText}" />
+                </DockPanel>
+            </Border>
+
             <!-- Play (first: open the launcher and go) -->
             <Border Style="{StaticResource Card}" Margin="0,0,0,14">
                 <StackPanel>

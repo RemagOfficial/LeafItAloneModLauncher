@@ -61,6 +61,38 @@ public sealed class AppConfig
     /// </summary>
     [JsonPropertyName("allowNonDefaultSources")] public bool AllowNonDefaultSources { get; set; }
 
+    /// <summary>
+    /// 2b: whether the output console is expanded. Defaults to <c>false</c> so a
+    /// fresh install opens with a clean, console-hidden window; the toggle remembers
+    /// the user's last choice.
+    /// </summary>
+    [JsonPropertyName("consoleExpanded")] public bool ConsoleExpanded { get; set; }
+
+    /// <summary>
+    /// 2b: last window size the user left the launcher at. Defaults are deliberately
+    /// larger than the old hardcoded 1080x720 so the Browse / Installed layouts have
+    /// room. Restored on startup and saved on resize (clamped in <see cref="Normalize"/>).
+    /// </summary>
+    [JsonPropertyName("windowWidth")] public double WindowWidth { get; set; } = DefaultWindowWidth;
+
+    /// <summary>2b: see <see cref="WindowWidth"/>.</summary>
+    [JsonPropertyName("windowHeight")] public double WindowHeight { get; set; } = DefaultWindowHeight;
+
+    /// <summary>Minimum window size; also the floor the restored size is clamped to.</summary>
+    public const double MinWindowWidth = 980;
+    public const double MinWindowHeight = 620;
+
+    /// <summary>Larger default window (2b) so the two-pane mod layouts never clip.</summary>
+    public const double DefaultWindowWidth = 1400;
+    public const double DefaultWindowHeight = 900;
+
+    /// <summary>
+    /// 2b: the app version whose "What's new" panel the user has already seen. When
+    /// <see cref="Launcher.AppInfo.Version"/> differs, the panel shows once and this
+    /// is updated, so it never repeats on every launch of the same version.
+    /// </summary>
+    [JsonPropertyName("lastWhatsNewVersion")] public string LastWhatsNewVersion { get; set; } = "";
+
     public static string DefaultPath()
     {
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -104,6 +136,14 @@ public sealed class AppConfig
         if (string.IsNullOrWhiteSpace(Accent) || !IsValidHex(Accent!)) Accent = DefaultAccent;
         ContentRootOverride ??= "";
         GameExeOverride ??= "";
+        LastWhatsNewVersion ??= "";
+        // Restore a sane window size: a corrupt/zero/off-screen value falls back to
+        // the larger default, and any stored size is floored at the minimum so the
+        // two-pane layout can never be resized into an unusable state.
+        if (double.IsNaN(WindowWidth) || double.IsInfinity(WindowWidth) || WindowWidth < MinWindowWidth)
+            WindowWidth = DefaultWindowWidth;
+        if (double.IsNaN(WindowHeight) || double.IsInfinity(WindowHeight) || WindowHeight < MinWindowHeight)
+            WindowHeight = DefaultWindowHeight;
     }
 
     private static bool IsValidHex(string s)

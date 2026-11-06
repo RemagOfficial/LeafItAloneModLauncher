@@ -21,6 +21,9 @@ public sealed record GitHubEntry(
     long Size,
     string? DownloadUrl);
 
+/// <summary>One GitHub release, normalised to the fields the UI needs (2b self-update / What's new).</summary>
+public sealed record ReleaseInfo(string Tag, string Url, string Body);
+
 /// <summary>Rate-limit snapshot read from response headers. All zeros when GitHub omits them.</summary>
 public sealed record RateLimitState(int Remaining, DateTimeOffset ResetUtc)
 {
@@ -150,6 +153,56 @@ public sealed class GitHubApi : IDisposable
         // + content, then SHA1) to match what GitHub reports in the contents listing.
         var sha = ComputeGitBlobSha(bytes);
         return (bytes, sha);
+    }
+
+    /// <summary>
+    /// 2b: the repo's most recent published release (<c>releases/latest</c>), used by
+    /// the self-update check. GitHub returns 404 for a repo with no releases; that is
+    /// surfaced as a <c>null</c> rather than an exception so startup stays silent.
+    /// </summary>
+    public async Task<ReleaseInfo?> GetLatestReleaseAsync(string owner, string repo, CancellationToken ct = default)
+    {
+        var url = $"https://api.github.com/repos/{owner}/{repo}/releases/latest";
+        return await FetchReleaseAsync(url, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 2b: the release carrying a specific tag (<c>releases/tags/{tag}</c>), used to
+    /// show "What's new" for the version actually installed. A missing tag returns
+    /// <c>null</c> (GitHub 404), never a throw.
+    /// </summary>
+    public async Task<ReleaseInfo?> GetReleaseByTagAsync(string owner, string repo, string tag, CancellationToken ct = default)
+    {
+        var url = $"https://api.github.com/repos/{owner}/{repo}/releases/tags/{Uri.EscapeDataString(tag)}";
+        return await FetchReleaseAsync(url, ct).ConfigureAwait(false);
+    }
+
+    private async Task<ReleaseInfo?> FetchReleaseAsync(string url, CancellationToken ct)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(_timeout);
+        HttpResponseMessage resp;
+        try
+        {
+            resp = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cts.Token).ConfigureAwait(false);
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new GitHubApiException("GitHub request timed out");
+        }
+        using (resp)
+        {
+            CaptureRateLimit(resp.Headers);
+            if (resp.StatusCode == HttpStatusCode.NotFound) return null;   // no such release yet
+            if (!resp.IsSuccessStatusCode)
+                throw new GitHubApiException($"GitHub release lookup failed: {(int)resp.StatusCode} {resp.ReasonPhrase}", resp.StatusCode);
+            using var doc = await ReadJsonAsync(resp, ct).ConfigureAwait(false);
+            var root = doc.RootElement;
+            var tag = ReadString(root, "tag_name") ?? "";
+            var htmlUrl = ReadString(root, "html_url") ?? "";
+            var body = ReadString(root, "body") ?? "";
+            return new ReleaseInfo(tag, htmlUrl, body);
+        }
     }
 
     private async Task<HttpResponseMessage> GetAsync(string url, CancellationToken ct)

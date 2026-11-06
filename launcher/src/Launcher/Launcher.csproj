@@ -15,6 +15,14 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>LeafItAlone.Launcher</RootNamespace>
     <AssemblyName>LeafItAloneLauncher</AssemblyName>
+    <!-- 2b: single source of truth for the app version (read by Services/AppInfo and
+         compared against GitHub releases for the self-update check). Keep this equal
+         to the latest released tag; bump it when a release is cut. -->
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <InformationalVersion>1.0.0</InformationalVersion>
+
     <!-- No external NuGet packages: System.Text.Json ships with the framework,
          so the project restores/builds fully offline. -->
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
