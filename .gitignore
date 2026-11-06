@@ -26,6 +26,17 @@ venv/
 # Never commit game-derived content
 mod-backups/
 *.bak
+*.bundle
+*.bundle.backup
+*.assets
+*.resS
+*.unity
+catalog.bin
+
+# Ad-hoc scratch folders devs drop next to a mod while diagnosing (may
+# contain extracted .bundle files - never commit).
+_scratch_*/
+scratch/
 
 # .NET launcher build output (never commit)
 bin/

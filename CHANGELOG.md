@@ -406,6 +406,18 @@ release notes inside its README.
   the real 319,584 B); `um` matches them only because it compares against the live game path where
   the safe-base has already deployed our copy. Documented as a known false positive, not shipped
   game binaries.
+- **2026-11-06 — content mods are now update-robust** (bag-capacity 1.3.0,
+  faster-bag-tying 1.1.0, more-leaves 1.4.0, sakura-petals-everywhere 2.3.0).
+  A game update rehashed every catalog CRC and some bundle filename GUIDs, and
+  applies failed ("crc cd9380f1 not present in catalog"). Root cause: the CRC
+  nullify step anchored on HARDCODED vanilla CRC values. All four mods now share
+  one `patch_catalog_null.py` that locates a bundle's catalog record from the
+  bundle's own filename/GUID on disk (path-entry occurrence + guid-tail
+  validation + live-size anchor; idempotent, refuses on ambiguity), and resolve
+  bundles by `<prefix>_*.bundle` globs that prefer the file the current catalog
+  references (an update can leave both old and new bundles on disk). The old
+  `patch_catalog.py` is deleted. Full apply→revert e2e passed on the updated
+  install; game left pristine (registry empty, catalog hash matches backup).
 
 ## 1.0.0
 Initial release: the `overlay/` example.

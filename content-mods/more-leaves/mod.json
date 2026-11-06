@@ -3,7 +3,7 @@
 
   "id": "more-leaves",
   "name": "More leaves per area",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "description": "Makes leaf areas denser so there are more leaves to rake before you unload. Per world it raises every coupled leaf count by the same factor - the scatter-position bank (each position expanded IN PLACE so each area keeps its own block of spots), the scene spawn budget (which also sets the completion goal) and the runtime leaf-area layout that decides how many leaves are actually pickable - so the extra leaves both appear AND can be collected at any multiplier. The title-screen backdrop shares the Hometown bank, so it scales with Hometown and stays whole.",
   "homepage": "",
   "order": 20,

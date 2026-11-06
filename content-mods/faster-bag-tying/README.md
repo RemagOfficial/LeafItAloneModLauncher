@@ -69,17 +69,19 @@ CLI flags (`-Scale`, `-Small..-Giant`, `-AlsoEmptying`) override the file for on
 - safe-base installed, game closed, and Python 3.12 with UnityPy
   (`C:\Python312\python.exe`). `apply.ps1` refuses unless all are healthy
   (`Assert-SafePreconditions`).
-- It patches
-  `coreassets_assets_actors_3f08c135ba3f70dc386f83f20db5b74e.bundle` and nulls
-  that bundle's Addressables CRC (`88295665`) in `catalog.bin` so the game loads
-  the repack, backing up **both** files first and rolling back on any failure.
+- It patches the actors bundle (`coreassets_assets_actors_<guid>.bundle`, found
+  by glob so a game update that rehashes the filename is fine) and nulls that
+  bundle's Addressables CRC record in `catalog.bin` so the game loads the
+  repack. The record is located by the bundle's own filename/GUID/size — no
+  hardcoded CRC — so game updates can't break the nullify step. Both files are
+  backed up first and rolled back on any failure.
 - Everything is reversible via `revert.ps1` or `safe-base\uninstall-all.ps1`.
   Steam "verify integrity of game files" restores both; just re-run `apply.ps1`.
 
 ## Files
 
 - `patch_faster_bag_tying.py` — the UnityPy editor (validates vanilla input, self-verifies output).
-- `patch_catalog.py` — nulls this bundle's CRC in `catalog.bin`.
+- `patch_catalog_null.py` — nulls this bundle's CRC in `catalog.bin`, locating the record by the bundle's filename/GUID/size (update-robust, idempotent).
 - `apply.ps1` / `revert.ps1` — safe-base-gated apply and undo.
 - `mod.json` — launcher manifest (builds the Mods UI; no launcher code changes).
 - `faster-bag-tying.json` — config template.

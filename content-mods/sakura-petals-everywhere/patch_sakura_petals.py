@@ -17,8 +17,8 @@ material reference is exactly what turns a world's leaves into petals.
 
 This mod repoints the chosen worlds' `material` PPtr at CherryLeaves. Leaf
 counts, scatter positions and bounds are untouched (they live per-area in the
-InitialLeaves banks), and the leaves stay fully pickable - only the look
-changes. Reads TypeTrees (preserved despite IL2CPP metadata encryption), writes
+InitialLeaves banks), and the leaves stay fully pickable. Reads TypeTrees
+(preserved despite IL2CPP metadata encryption), writes
 them back, repacks into --out-dir, then RE-OPENS the output and verifies before
 exiting 0. A non-zero exit means nothing was written.
 
@@ -56,17 +56,25 @@ WORLDS = {
 CONVERTIBLE = ("Hometown", "Castle")
 
 
-def _leaf_material(tree):
-    """Return the `material` PPtr dict from a world scene asset's
-    LeafSettingsSceneProperty RefId, or None."""
+def _leaf_settings(tree):
+    """Return the LeafSettingsSceneProperty RefId `data` dict from a world scene
+    asset's typetree, or None."""
     for r in tree.get("references", {}).get("RefIds", []):
         if r.get("type", {}).get("class") == "LeafSettingsSceneProperty":
-            return r.get("data", {}).get("material")
+            return r.get("data")
     return None
 
 
+def _leaf_material(tree):
+    """Return the `material` PPtr dict from a world scene asset's
+    LeafSettingsSceneProperty RefId, or None."""
+    data = _leaf_settings(tree)
+    return data.get("material") if data else None
+
+
 def read_mats(bundle_path):
-    """Return {m_Name: material path_id} for the three world scene assets."""
+    """Return {m_Name: {"material": path_id, "widths": [16 floats]}} for the
+    three world scene assets."""
     env = UnityPy.load(bundle_path)
     found = {}
     for obj in env.objects:
@@ -77,9 +85,11 @@ def read_mats(bundle_path):
             continue
         name = tree.get("m_Name")
         if isinstance(name, str) and name in WORLDS:
-            mat = _leaf_material(tree)
-            if mat is not None:
-                found[name] = int(mat["m_PathID"])
+            data = _leaf_settings(tree)
+            if data is not None and data.get("material") is not None:
+                widths = [float(w) for w in data.get("leafWidths", [])]
+                found[name] = {"material": int(data["material"]["m_PathID"]),
+                               "widths": widths}
     return found
 
 
@@ -104,12 +114,12 @@ def patch(in_path, out_dir, worlds):
     if missing:
         sys.exit(f"ERROR: expected world scene assets not present: {missing}. "
                  f"Refusing to patch an unexpected bundle.")
-    if before["Sakura"] != CHERRY_MAT:
-        sys.exit(f"ERROR: Sakura's leaf material is {before['Sakura']}, not the "
+    if before["Sakura"]["material"] != CHERRY_MAT:
+        sys.exit(f"ERROR: Sakura's leaf material is {before['Sakura']['material']}, not the "
                  f"expected CherryLeaves {CHERRY_MAT}. Wrong bundle or a prior "
                  f"mod changed it; refusing.")
     for w in worlds:
-        cur = before[w]
+        cur = before[w]["material"]
         if cur == CHERRY_MAT:
             sys.exit(f"ERROR: {w} already uses the CherryLeaves material. Revert "
                      f"any prior mod first (revert.ps1 / uninstall-all.ps1) before "
@@ -128,19 +138,26 @@ def patch(in_path, out_dir, worlds):
         if not isinstance(tree, dict):
             continue
         name = tree.get("m_Name")
-        if name not in worlds:
+        if name not in WORLDS:
             continue
-        mat = _leaf_material(tree)
-        if mat is None:
+        data = _leaf_settings(tree)
+        if data is None or data.get("material") is None:
             sys.exit(f"ERROR: {name} has no LeafSettingsSceneProperty RefId; "
                      f"bundle shape changed.")
-        orig = int(mat["m_PathID"])
-        mat["m_PathID"] = CHERRY_MAT      # same bundle (m_FileID 5), only the object swaps
+        change = {"name": name}
+        if name in worlds:
+            mat = data["material"]
+            change["mat_from"] = int(mat["m_PathID"])
+            mat["m_PathID"] = CHERRY_MAT   # same bundle (m_FileID 5), only the object swaps
+            change["mat_to"] = CHERRY_MAT
+        if len(change) == 1:               # not a targeted world this run
+            continue
         obj.save_typetree(tree)
-        changes.append({"name": name, "mat_from": orig, "mat_to": CHERRY_MAT})
+        changes.append(change)
 
-    if len(changes) != len(worlds):
-        sys.exit(f"ERROR: patched {len(changes)} of {len(worlds)} requested worlds.")
+    n_mat = sum(1 for c in changes if "mat_to" in c)
+    if n_mat != len(worlds):
+        sys.exit(f"ERROR: repointed {n_mat} of {len(worlds)} requested worlds.")
 
     env.save(pack="original", out_path=out_dir)
 
@@ -152,19 +169,19 @@ def patch(in_path, out_dir, worlds):
     if not os.path.isfile(out_path):
         out_path = produced[0]
 
-    # Post-write verification: re-open the OUTPUT and assert the materials.
+    # Post-write verification: re-open the OUTPUT and assert materials.
     after = read_mats(out_path)
     for c in changes:
-        if after.get(c["name"]) != CHERRY_MAT:
-            sys.exit(f"ERROR: verify failed for {c['name']}: output material "
-                     f"{after.get(c['name'])}, expected {CHERRY_MAT}. Output NOT applied.")
+        wname = c["name"]
+        if "mat_to" in c and after[wname]["material"] != CHERRY_MAT:
+            sys.exit(f"ERROR: verify failed for {wname}: output material "
+                     f"{after[wname]['material']}, expected {CHERRY_MAT}. Output NOT applied.")
     for w in CONVERTIBLE:
-        if w not in worlds and after.get(w) != LEAVES_MAT:
+        if w not in worlds and after[w]["material"] != LEAVES_MAT:
             sys.exit(f"ERROR: verify failed - unselected world {w} changed to "
-                     f"{after.get(w)}. Output NOT trustworthy.")
-    if after.get("Sakura") != CHERRY_MAT:
-        sys.exit(f"ERROR: verify failed - Sakura moved to {after.get('Sakura')}. "
-                 f"Output NOT trustworthy.")
+                     f"{after[w]['material']}. Output NOT trustworthy.")
+    if after["Sakura"]["material"] != CHERRY_MAT:
+        sys.exit(f"ERROR: verify failed - Sakura material moved. Output NOT trustworthy.")
 
     report = {
         "in": in_path,
@@ -188,7 +205,7 @@ def main():
     ap.add_argument("--hometown", action="store_true", help="convert Hometown's leaves to petals")
     ap.add_argument("--castle", action="store_true", help="convert the Castle's leaves to petals")
     ap.add_argument("--all", action="store_true", help="convert both worlds (default when neither flag is given)")
-    ap.add_argument("--verify-only", action="store_true", help="just print current leaf materials and exit")
+    ap.add_argument("--verify-only", action="store_true", help="just print current leaf materials + widths and exit")
     args = ap.parse_args()
 
     if args.verify_only:

@@ -3,7 +3,7 @@
 
   "id": "faster-bag-tying",
   "name": "Faster bag tying",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Makes tying a full leaf bag faster by lowering the base tying time on every bag, from the start instead of waiting for the in-game upgrades. Choose a simple fraction of the vanilla tying time, or set each bag's seconds explicitly. Optionally speed up bag emptying (dumping) too.",
   "homepage": "",
   "order": 30,

@@ -79,11 +79,15 @@ Command line, without the launcher:
    (`patch_leaves.py`), which refuses a bundle with no layout component and
    re-opens its own output to verify every area *and* the sum invariant before
    exiting 0.
-4. `Backup-Original` all three bundles **and** `aa/catalog.bin` (pristine), then
-   null each bundle's CRC in the catalog (`patch_catalog_null.py` anchors on the
-   bundle's size, proven unique) so Addressables loads the repacks instead of
-   hanging on a CRC mismatch, overwrite the bundles, re-verify the live files, and
-   `Register-Mod` every file. Any failure after the backups restores them all.
+4. `Backup-Original` every touched bundle **and** `aa/catalog.bin` (pristine), then
+   null each bundle's CRC in the catalog (`patch_catalog_null.py` locates each
+   record from the bundle's own filename/GUID on disk — no hardcoded CRC or
+   hash, so game updates can't break it) so Addressables loads the repacks
+   instead of hanging on a CRC mismatch, overwrite the bundles, re-verify the
+   live files, and `Register-Mod` every file. Any failure after the backups
+   restores them all. Every bundle is resolved by a `<prefix>_*.bundle` glob
+   (preferring the file the current catalog references), so an update that
+   rehashes filename GUIDs needs no mod change.
 
 The scene bundles are large (castle ~80 MB, sakura ~287 MB); UnityPy repacks them
 **faithfully** — an offline round-trip of the hometown scene preserved all 6626
@@ -109,7 +113,7 @@ the result in `MODLOG.md` either way.
 | `apply.ps1` | Gated installer: patches the 3 scene bundles + nulls their catalog CRCs, backs up, registers, rolls back on failure. |
 | `revert.ps1` | Restores the pristine scene bundles + catalog via the SDK. |
 | `patch_leaves.py` | UnityPy editor: scale each area's `initArgs` count + recompute the scene pool, self-verifying. |
-| `patch_catalog_null.py` | Nulls one bundle's catalog CRC, anchored on its (unique) size. |
+| `patch_catalog_null.py` | Nulls one bundle's catalog CRC, locating the record by the bundle's filename/GUID/size (update-robust, idempotent). |
 
 ## License
 MIT. No game files or extracted game assets are redistributed — the patchers run

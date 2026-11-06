@@ -1,4 +1,5 @@
-# apply.ps1 - more-leaves content mod (v1.3.1, coupled bank + scene + areas + runtime prefab + menu).
+# apply.ps1 - more-leaves content mod (v1.4.0, update-robust: glob bundle resolution +
+#   filename/GUID-anchored catalog CRC nullify; coupled bank + scene + areas + runtime prefab + menu).
 #
 # WHAT ACTUALLY MAKES MORE LEAVES (proven in game, see MODLOG):
 # Leaves are seeded from a FIXED bank of scatter positions, stored as a binary TextAsset
@@ -46,10 +47,11 @@
 #
 # This game loads bundles through Unity Addressables, which CRC-verifies every bundle
 # against catalog.bin and silently hangs on a mismatch, so for EACH file we actually
-# overwrite we null its catalog CRC (0 = "skip the check") via patch_catalog_null.py. We
-# never hardcode CRCs (they move with updates): we anchor each record by the bundle's
-# pristine on-disk size, which recon proved is unique per bundle. Addressables does NOT
-# validate the size field, so a repacked (different-size) bundle still loads.
+# overwrite we null its catalog CRC (0 = "skip the check") via patch_catalog_null.py.
+# We never hardcode CRCs or sizes (both move with updates): the nuller locates each
+# record from the bundle's own filename/GUID on disk, and the live pristine size only
+# confirms it. Addressables does NOT validate the size field, so a repacked
+# (different-size) bundle still loads.
 #
 # Flow:
 #   1. Import the deployed SDK; refuse if the game is running.
@@ -112,12 +114,54 @@ Assert-SafePreconditions         # throws unless every safety layer is healthy n
 
 # 2. resolve paths. aa bundle dir = <game>\Leaf it Alone_Data\StreamingAssets\aa\StandaloneWindows64.
 $modName    = 'more-leaves'
-$modVersion = '1.3.1'
+$modVersion = '1.4.0'
 $gameFolder = if ($m.gameExe) { Split-Path -Parent $m.gameExe } else { $null }
 $aaRel = 'Leaf it Alone_Data\StreamingAssets\aa\StandaloneWindows64'
-$bankRel = 'coreassets_assets_leaves_a76c2866d9921fdc11a0f12dd50bed8e.bundle'
-$prefabRel = 'coreprefabs_assets_actor_9c677a13324a82adca2ab559f833e77e.bundle'
-$menuRel = 'scenes_scenes_menu_e2405d86f0286723082b348430a297e3.bundle'
+# GLOB by stable prefix: a game update can rehash the <guid> in every bundle
+# filename, so never pin the exact name. When an update leaves BOTH the old and
+# the new bundle on disk, only the one the catalog stores as a PATH entry
+# ("\...\<name>.bundle", the record with the crc/size) is what the game loads -
+# prefer those; fall back to newest mtime if the catalog names none (or all).
+$aaDirLive = if ($gameFolder) { Join-Path $gameFolder $aaRel } else { $null }
+$catalogBytes = $null
+$catalogText  = $null
+if ($aaDirLive) {
+    $catFile = Join-Path (Split-Path -Parent $aaDirLive) 'catalog.bin'
+    if (Test-Path -LiteralPath $catFile) {
+        $catalogBytes = [System.IO.File]::ReadAllBytes($catFile)
+        $catalogText  = [System.Text.Encoding]::GetEncoding(28591).GetString($catalogBytes)
+    }
+}
+function Test-CatalogPathEntry([string]$Name) {
+    if (-not $catalogText) { return $false }
+    return $catalogText.Contains('\' + $Name)
+}
+function Find-NewestBundle {
+    param([string]$Prefix, [string]$Override, [string]$ParamName)
+    if ($Override) { return $Override }
+    if (-not $aaDirLive) { throw "manifest has no gameExe to locate the game folder; pass -$ParamName." }
+    $hits = @(Get-ChildItem -LiteralPath $aaDirLive -Filter "$Prefix*.bundle" -File -ErrorAction SilentlyContinue |
+              Sort-Object LastWriteTime -Descending)
+    if ($hits.Count -eq 0) { return $null }
+    if ($hits.Count -gt 1) {
+        $ref = @($hits | Where-Object { Test-CatalogPathEntry $_.Name })
+        if ($ref.Count -ge 1) {
+            if ($ref.Count -lt $hits.Count) {
+                Write-Warning "$($hits.Count) bundles match $Prefix*; the catalog references: $(($ref | ForEach-Object Name) -join ', ') (the others are update leftovers, skipped)."
+            }
+            $hits = $ref
+        } else {
+            Write-Warning "$($hits.Count) bundles match $Prefix*, none referenced in the catalog (half-updated install?); using the newest: $($hits[0].Name)"
+        }
+    }
+    return $hits[0].FullName
+}
+$bankGlob  = 'coreassets_assets_leaves_'
+$prefabGlob = 'coreprefabs_assets_actor_'
+$menuGlob  = 'scenes_scenes_menu_'
+$bankRel   = 'the leaves position bank (coreassets_assets_leaves_<guid>.bundle)'
+$prefabRel = 'the actor prefab layout (coreprefabs_assets_actor_<guid>.bundle)'
+$menuRel   = 'the title-screen scene (scenes_scenes_menu_<guid>.bundle)'
 
 # The three gameplay scenes. The 'menu' scene is the TITLE SCREEN backdrop: it carries a
 # leaf-area layout identical in total to Hometown (top 102400, 13 areas) and reads the SAME
@@ -128,46 +172,33 @@ $menuRel = 'scenes_scenes_menu_e2405d86f0286723082b348430a297e3.bundle'
 # Each world ALSO has a paired AREAS bundle (the collectable leaf-count registry) that
 # must be scaled in lockstep, else extra leaves spawn but cannot be picked up.
 $scenes = @(
-    [pscustomobject]@{ world = 'castle';   rel = 'scenes_scenes_castle_5c96ecbc28a4e31a62348860d5ce86b1.bundle';   override = $BundlePath;   path = $null; areasRel = 'coreassets_assets_areas1_8e3036b36895e7c6485532e654da3e5f.bundle'; areasPath = $null },
-    [pscustomobject]@{ world = 'hometown'; rel = 'scenes_scenes_hometown_2afce141d126dd98653202bd527990ad.bundle'; override = $BundlePath2; path = $null; areasRel = 'coreassets_assets_areas2_80a63bb70ac28ae6d964b09c362609c1.bundle'; areasPath = $null },
-    [pscustomobject]@{ world = 'sakura';   rel = 'scenes_scenes_sakura_70c027aeaf66aeb0813dccf365b98024.bundle';   override = $BundlePath3; path = $null; areasRel = 'coreassets_assets_areas_8b0bfc6a8ac72817b8c2f51f94ee9d8a.bundle';  areasPath = $null }
+    [pscustomobject]@{ world = 'castle';   glob = 'scenes_scenes_castle_';   override = $BundlePath;   path = $null; areasGlob = 'coreassets_assets_areas1_'; areasPath = $null },
+    [pscustomobject]@{ world = 'hometown'; glob = 'scenes_scenes_hometown_'; override = $BundlePath2; path = $null; areasGlob = 'coreassets_assets_areas2_'; areasPath = $null },
+    [pscustomobject]@{ world = 'sakura';   glob = 'scenes_scenes_sakura_';   override = $BundlePath3; path = $null; areasGlob = 'coreassets_assets_areas_';  areasPath = $null }
 )
 foreach ($s in $scenes) {
-    if ($s.override) { $s.path = $s.override }
-    else {
-        if (-not $gameFolder) { throw "manifest has no gameExe to locate the game folder; pass -BundlePath/-BundlePath2/-BundlePath3." }
-        $s.path = (Join-Path $gameFolder (Join-Path $aaRel $s.rel))
-    }
+    $s.path = Find-NewestBundle -Prefix $s.glob -Override $s.override -ParamName 'BundlePath'
     # the areas bundle always sits in the SAME dir as its scene bundle
-    $s.areasPath = Join-Path (Split-Path -Parent $s.path) $s.areasRel
+    $s.areasPath = if ($s.path) { Find-NewestBundle -Prefix $s.areasGlob -Override $null -ParamName 'BundlePath' } else { $null }
 }
-if ($BankPath) { $bankBundle = $BankPath }
-else {
-    if (-not $gameFolder) { throw "manifest has no gameExe to locate the game folder; pass -BankPath." }
-    $bankBundle = Join-Path $gameFolder (Join-Path $aaRel $bankRel)
-}
-# The actor-prefab layout bundle sits in the same aa dir as the bank; derive from it so a
-# -BankPath override still locates it. Pass -PrefabPath to point elsewhere.
-if ($PrefabPath) { $prefabBundle = $PrefabPath }
-else { $prefabBundle = Join-Path (Split-Path -Parent $bankBundle) $prefabRel }
-
-# The menu (title-screen) scene sits in the same aa dir as the gameplay scenes; derive from
-# the hometown scene so a -BundlePath2 override still locates it. Pass -MenuPath elsewhere.
-if ($MenuPath) { $menuBundle = $MenuPath }
-else { $menuBundle = Join-Path (Split-Path -Parent $scenes[1].path) $menuRel }
+$bankBundle   = Find-NewestBundle -Prefix $bankGlob  -Override $BankPath   -ParamName 'BankPath'
+$prefabBundle = Find-NewestBundle -Prefix $prefabGlob -Override $PrefabPath -ParamName 'PrefabPath'
+$menuBundle   = Find-NewestBundle -Prefix $menuGlob  -Override $MenuPath   -ParamName 'MenuPath'
 
 if (-not $CatalogPath) {
+    if (-not $aaDirLive) { throw "manifest has no gameExe to locate the game folder; pass -CatalogPath." }
     # catalog.bin sits at <...>/StreamingAssets/aa/catalog.bin, one level above the bundle dir
-    $aaDir = Split-Path -Parent (Split-Path -Parent $scenes[0].path)
-    $CatalogPath = Join-Path $aaDir 'catalog.bin'
+    $CatalogPath = Join-Path (Split-Path -Parent $aaDirLive) 'catalog.bin'
 }
+$missing = @()
 foreach ($p in (@($scenes[0].path, $scenes[1].path, $scenes[2].path,
                   $scenes[0].areasPath, $scenes[1].areasPath, $scenes[2].areasPath,
                   $bankBundle, $prefabBundle, $menuBundle))) {
-    if (-not (Test-Path -LiteralPath $p)) {
-        Write-Error "target bundle not found at:`n  $p`nGame may have updated (bundle hash changed) or is installed elsewhere. Pass the -BundlePath/-BankPath overrides."
-        exit 4
-    }
+    if (-not $p -or -not (Test-Path -LiteralPath $p)) { $missing += $p }
+}
+if ($missing.Count -gt 0) {
+    Write-Error ("target bundle(s) not found (searched:`n  {0}`n):`n{1}`nGame may have updated or is installed elsewhere. Pass the -BundlePath/-BankPath overrides." -f $aaDirLive, (($missing | ForEach-Object { "  $_" }) -join "`n"))
+    exit 4
 }
 if (-not (Test-Path -LiteralPath $CatalogPath)) {
     Write-Error "Addressables catalog not found at:`n  $CatalogPath`nPass -CatalogPath if the layout differs."
@@ -247,20 +278,20 @@ $work = @()
 foreach ($s in $scenes) {
     $sc = switch ($s.world) { 'castle' { $sC } 'hometown' { $sH } 'sakura' { $sS } }
     if ($sc -gt 1) {
-        $work += [pscustomobject]@{ kind = 'scene'; world = $s.world; rel = $s.rel;      path = $s.path;      scale = $sc }
-        $work += [pscustomobject]@{ kind = 'areas'; world = $s.world; rel = $s.areasRel; path = $s.areasPath; scale = $sc }
+        $work += [pscustomobject]@{ kind = 'scene'; world = $s.world; path = $s.path;      scale = $sc }
+        $work += [pscustomobject]@{ kind = 'areas'; world = $s.world; path = $s.areasPath; scale = $sc }
     }
 }
 if (($sH -gt 1) -or ($sC -gt 1) -or ($sS -gt 1)) {
-    $work += [pscustomobject]@{ kind = 'bank';   world = '(all)'; rel = $bankRel;   path = $bankBundle;   scale = 0 }
+    $work += [pscustomobject]@{ kind = 'bank';   world = '(all)'; path = $bankBundle;   scale = 0 }
     # the actor prefab holds all three worlds' layouts in one bundle -> patch once, per-world
-    $work += [pscustomobject]@{ kind = 'prefab'; world = '(all)'; rel = $prefabRel; path = $prefabBundle; scale = 0 }
+    $work += [pscustomobject]@{ kind = 'prefab'; world = '(all)'; path = $prefabBundle; scale = 0 }
 }
 # The title-screen 'menu' scene reads the Hometown bank, so it must be scaled by the SAME
 # factor as Hometown (patched with patch_leaves, scale = $sH) whenever Hometown is denser;
 # at $sH == 1 the hometown bank is left whole and the menu stays byte-identical (vanilla).
 if ($sH -gt 1) {
-    $work += [pscustomobject]@{ kind = 'menu'; world = 'hometown'; rel = $menuRel; path = $menuBundle; scale = $sH }
+    $work += [pscustomobject]@{ kind = 'menu'; world = 'hometown'; path = $menuBundle; scale = $sH }
 }
 if ($work.Count -eq 0) {
     Write-Warning "every world scale is 1 - nothing to do (that is just vanilla). Set a scale > 1 in more-leaves.json or pass -ScaleHometown/-ScaleCastle/-ScaleSakura."
@@ -268,11 +299,11 @@ if ($work.Count -eq 0) {
 }
 
 Write-Host ""
-Write-Host "more-leaves apply (v1.3.1 bank-in-place + scene + prefab layout + areas + menu, scatter)" -ForegroundColor Cyan
+Write-Host "more-leaves apply (v1.4.0 update-robust glob + nullify; bank-in-place + scene + prefab layout + areas + menu, scatter)" -ForegroundColor Cyan
 Write-Host ("  scales  : hometown x{0}  castle x{1}  sakura x{2}" -f $sH, $sC, $sS) -ForegroundColor Magenta
 Write-Host ("  scatter : radius {0} m (x/z only, y preserved)  seed {1}" -f $radius, $seed)
 Write-Host ("  files   :")
-foreach ($w in $work) { Write-Host ("            [{0}] {1}" -f $w.kind, $w.rel) }
+foreach ($w in $work) { Write-Host ("            [{0}] {1}" -f $w.kind, (Split-Path -Leaf $w.path)) }
 Write-Host "  catalog : $CatalogPath  (nulls the CRC of every file touched above)"
 Write-Host "  safety  : M1 + M2 + M3 + M4 verified via Assert-SafePreconditions"
 Write-Host "  note    : sakura (~287 MB) repack can take tens of seconds; that is normal."
@@ -291,28 +322,29 @@ try {
     for ($i = 0; $i -lt $work.Count; $i++) {
         $w = $work[$i]
         $b = $w.path
+        $wn = Split-Path -Leaf $b                          # resolved bundle name for logs
         $sz = (Get-Item -LiteralPath $b).Length        # pristine size, before overwrite -> catalog anchor
         $mb = [math]::Round($sz / 1MB)
         $sub = Join-Path $staging ("b$i")
         New-Item -Path $sub -ItemType Directory -Force | Out-Null
 
         if ($w.kind -eq 'bank') {
-            Write-Host "[patch] $($w.rel) (~$mb MB) -> staging (BANK scatter H$sH/C$sC/S$sS, r=$radius)..." -ForegroundColor Cyan
+            Write-Host "[patch] $wn (~$mb MB) -> staging (BANK scatter H$sH/C$sC/S$sS, r=$radius)..." -ForegroundColor Cyan
             $patchArgs = @($posPatcher, '--in', $b, '--out-dir', $sub, '--mode', 'scatter',
                             '--scale-hometown', $sH, '--scale-castle', $sC, '--scale-sakura', $sS,
                             '--radius', $radius, '--seed', $seed)
         } elseif ($w.kind -eq 'areas') {
-            Write-Host "[patch] $($w.rel) -> staging (AREAS collectable count x$($w.scale))..." -ForegroundColor Cyan
+            Write-Host "[patch] $wn -> staging (AREAS collectable count x$($w.scale))..." -ForegroundColor Cyan
             $patchArgs = @($areasPatcher, '--in', $b, '--out-dir', $sub, '--scale', $w.scale)
         } elseif ($w.kind -eq 'prefab') {
-            Write-Host "[patch] $($w.rel) -> staging (PREFAB runtime leaf-area layout H$sH/C$sC/S$sS)..." -ForegroundColor Cyan
+            Write-Host "[patch] $wn -> staging (PREFAB runtime leaf-area layout H$sH/C$sC/S$sS)..." -ForegroundColor Cyan
             $patchArgs = @($prefabPatcher, '--in', $b, '--out-dir', $sub,
                            '--scale-hometown', $sH, '--scale-castle', $sC, '--scale-sakura', $sS)
         } elseif ($w.kind -eq 'menu') {
-            Write-Host "[patch] $($w.rel) (~$mb MB) -> staging (TITLE/MENU budget x$($w.scale), tracks hometown bank)..." -ForegroundColor Cyan
+            Write-Host "[patch] $wn (~$mb MB) -> staging (TITLE/MENU budget x$($w.scale), tracks hometown bank)..." -ForegroundColor Cyan
             $patchArgs = @($patcher, '--in', $b, '--out-dir', $sub, '--scale', $w.scale)
         } else {
-            Write-Host "[patch] $($w.rel) (~$mb MB) -> staging (scene budget x$($w.scale))..." -ForegroundColor Cyan
+            Write-Host "[patch] $wn (~$mb MB) -> staging (scene budget x$($w.scale))..." -ForegroundColor Cyan
             $patchArgs = @($patcher, '--in', $b, '--out-dir', $sub, '--scale', $w.scale)
         }
         $patchOut = & $Python @patchArgs
@@ -333,25 +365,27 @@ try {
     $records += $recCatalog
 
     try {
-        # 8. null each touched bundle's CRC in the catalog (unique size anchor, refuses otherwise).
+        # 8. null each touched bundle's CRC in the catalog (update-robust: the
+        # record is located from the bundle's own filename/GUID, no CRC pinned).
         foreach ($w in $work) {
-            Write-Host "[catalog] nullifying CRC for $($w.rel) (size $($w.origSize))..." -ForegroundColor Cyan
-            $catOut = & $Python $catNull --catalog $CatalogPath --expect-size $w.origSize
+            $wn = Split-Path -Leaf $w.path
+            Write-Host "[catalog] nullifying CRC for $wn (filename/GUID-anchored)..." -ForegroundColor Cyan
+            $catOut = & $Python $catNull --catalog $CatalogPath --bundle-path $w.path
             $catCode = $LASTEXITCODE
             Write-Host ($catOut | Out-String)
-            if ($catCode -ne 0) { throw "catalog nuller exited $catCode for $($w.rel)" }
+            if ($catCode -ne 0) { throw "catalog nuller exited $catCode for $wn" }
         }
 
         # 9. overwrite the live bundles with the staged (verified) ones.
         foreach ($w in $work) {
-            Write-Host "[apply] replacing $($w.rel)..." -ForegroundColor Cyan
+            Write-Host "[apply] replacing $(Split-Path -Leaf $w.path)..." -ForegroundColor Cyan
             Copy-Item -LiteralPath $w.staged -Destination $w.path -Force
         }
 
         # 10. re-read each LIVE file to prove the applied bytes are correct (survey exits
         # non-zero if the layout object / bank is missing or an invariant broke).
         foreach ($w in $work) {
-            Write-Host "[verify] re-reading live $($w.rel)..." -ForegroundColor Cyan
+            Write-Host "[verify] re-reading live $(Split-Path -Leaf $w.path)..." -ForegroundColor Cyan
             if ($w.kind -eq 'bank') {
                 $live = (& $Python $posPatcher --in $w.path --verify-only) -join "`n"
             } elseif ($w.kind -eq 'areas') {
@@ -378,7 +412,7 @@ try {
     }
 
     # 11. register every file so safe-base can reverse the whole change.
-    $notes = "more-leaves v1.3.1 scatter: bank(in-place)+scene+prefab+areas+menu H$sH/C$sC/S$sS (r=$radius seed=$seed); $($work.Count) catalog CRCs nullified"
+    $notes = "more-leaves v1.4.0 scatter: bank(in-place)+scene+prefab+areas+menu H$sH/C$sC/S$sS (r=$radius seed=$seed); $($work.Count) catalog CRCs nullified"
     Register-Mod -Name $modName -Version $modVersion -Files $records `
         -RevertScript (Join-Path $PSScriptRoot 'revert.ps1') -Notes $notes | Out-Null
 } finally {
@@ -386,7 +420,7 @@ try {
 }
 
 Write-Host ""
-Write-Host "OK - more-leaves v1.3.1 applied." -ForegroundColor Green
+Write-Host "OK - more-leaves v1.4.0 applied." -ForegroundColor Green
 Write-Host ("  density : hometown x{0}  castle x{1}  sakura x{2}  (scatter r={3} m)" -f $sH, $sC, $sS, $radius)
 Write-Host "  Launch and rake - the ground should be visibly denser with leaves, the goal"
 Write-Host "  rises to match, and (now that the bank is expanded IN PLACE so each area's"

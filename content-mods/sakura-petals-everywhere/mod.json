@@ -3,7 +3,7 @@
 
   "id": "sakura-petals-everywhere",
   "name": "Sakura petals everywhere",
-  "version": "2.0.0",
+  "version": "2.4.0",
   "description": "Brings the sakura map's special petal leaves into the other worlds. Each world keeps its own leaf counts and scatter, only the leaf material changes to the cherry-petal one (not a particle change; the leaves stay fully pickable).",
   "homepage": "",
   "order": 35,

@@ -25,6 +25,9 @@ each with a single `capacity` int, living in one small metadata bundle:
 <game>\Leaf it Alone_Data\StreamingAssets\aa\StandaloneWindows64\
     coreassets_assets_meta_ebdcc9c18e1c4d94460e79b368e85abe.bundle
 ```
+(the `<guid>` hash in the filename changes with game updates; `apply.ps1` finds
+the file by a `coreassets_assets_meta_*.bundle` glob, so the name above is just
+an example of the current install)
 
 The bundle is plain (unencrypted) UnityFS with intact TypeTrees, so
 [UnityPy](https://github.com/Logardas/UnityPy) reads and rewrites the fields
@@ -38,11 +41,15 @@ Addressables 2.9, which verifies each bundle's CRC against `aa/catalog.bin`
 before loading (`AssetBundle.LoadFromFileAsync(path, crc)`). Repacking the bundle
 changes its CRC, so on a stock catalog the game **refuses the bundle and hangs on
 a black screen** after the logo. `apply.ps1` therefore also runs
-`patch_catalog.py`, which nulls *this one bundle's* CRC in the catalog
-(`crc = 0` tells Unity to skip the check) — guarded so it only fires on a unique
-match whose adjacent field is the vanilla bundle size. Both the bundle and the
-catalog are backed up and restored together, so `revert.ps1` puts everything
-back exactly as it was.
+`patch_catalog_null.py`, which nulls *this one bundle's* CRC in the catalog
+(`crc = 0` tells Unity to skip the check). It locates the bundle's catalog record
+from the bundle's own **filename/GUID on disk** (plus its live size as a
+confirm), never a hardcoded CRC value, so a game update that rehashes the CRC
+cannot break it; it refuses if the record is ambiguous and treats an
+already-zeroed CRC as a no-op. The bundle it patches is found by a
+`coreassets_assets_meta_*.bundle` glob (the filename hash can change with
+updates). Both the bundle and the catalog are backed up and restored together,
+so `revert.ps1` puts everything back exactly as it was.
 
 ## Requirements
 
@@ -140,7 +147,7 @@ game:
 
 ```powershell
 C:\Python312\python.exe patch_bag_capacity.py --verify-only `
-  --in "<game>\Leaf it Alone_Data\StreamingAssets\aa\StandaloneWindows64\coreassets_assets_meta_ebdcc9c18e1c4d94460e79b368e85abe.bundle"
+  --in "<game>\Leaf it Alone_Data\StreamingAssets\aa\StandaloneWindows64\coreassets_assets_meta_<guid>.bundle"
 ```
 
 ## Known risks / troubleshooting
@@ -148,14 +155,17 @@ C:\Python312\python.exe patch_bag_capacity.py --verify-only `
 - **Steam "verify integrity of game files"** will re-download the original
   bundle **and** `catalog.bin` and silently undo the mod. That's harmless — just
   run `apply.ps1` again (safe-base still guards you the whole time).
-- **Addressables CRC** is handled automatically (see above). If a future game
-  update changes the bundle's vanilla CRC, `patch_catalog.py` refuses (the anchor
-  isn't found) and `apply.ps1` restores both files — you'd just update the
-  `-VanillaCrc` value to the new one from a fresh log line.
-- **Game updated** → the bundle's filename hash may change and `apply.ps1` will
-  report "target bundle not found". Re-check the path in
-  `StreamingAssets\aa\StandaloneWindows64\` and pass it with `-BundlePath`, or
-  wait for an updated mod.
+- **Addressables CRC** is handled automatically and is update-robust (see
+  above): the catalog record is located by the bundle's own filename/GUID, so a
+  game update that rehashes the CRC needs **no mod change**. If the record ever
+  can't be located uniquely, `patch_catalog_null.py` refuses and `apply.ps1`
+  restores both files — read its JSON error and re-run after finishing the
+  update / a Steam verify.
+- **Game updated** → the bundle's filename hash may change; `apply.ps1` finds it
+  automatically via a `coreassets_assets_meta_*.bundle` glob (preferring the
+  file the current catalog references), so no manual step is needed. It only
+  reports "no ... bundle found" if the install layout itself moved — pass
+  `-BundlePath` in that case.
 - If a *different* bag mod already changed the values, `apply.ps1` refuses
   (it only patches the known vanilla numbers) — revert that one first.
 
@@ -167,7 +177,7 @@ C:\Python312\python.exe patch_bag_capacity.py --verify-only `
 | `apply.ps1`   | installer: safety asserts → resolve sizes → (revert if already applied) → stage → backup bundle+catalog → null catalog CRC → apply → verify → register |
 | `revert.ps1`  | undo via the safe-base registry (byte-identical restore of both files) |
 | `patch_bag_capacity.py` | the UnityPy editor (explicit sizes or scale; self-verifying, refuses non-vanilla input) |
-| `patch_catalog.py` | nulls this bundle's CRC in `aa/catalog.bin` (guarded: unique match + adjacent size) |
+| `patch_catalog_null.py` | nulls this bundle's CRC in `aa/catalog.bin`, locating the record by the bundle's filename/GUID/size (update-robust, idempotent, refuses on ambiguity) |
 
 ## License
 

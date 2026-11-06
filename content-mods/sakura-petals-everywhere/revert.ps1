@@ -30,7 +30,7 @@ if ($registered.Count -eq 0) {
     exit 0
 }
 if (-not $Yes) {
-    $reply = Read-Host "Revert '$modName' (restore the vanilla leaf-area prefabs)? Type YES to continue"
+    $reply = Read-Host "Revert '$modName' (restore the vanilla leaf bundle(s))? Type YES to continue"
     if ($reply -ne 'YES') { Write-Host "aborted"; exit 0 }
 }
 
@@ -41,5 +41,5 @@ foreach ($f in $report.files) {
     Write-Host ("  {0,-7} {1}  ({2})" -f $f.action, $f.targetPath, $f.detail)
 }
 Write-Host ""
-Write-Host "Every world is back to its own leaf prefab. The modded bundle is parked beside"
-Write-Host "the game folder as .modified-<timestamp> if you want to re-apply quickly."
+Write-Host "Every world is back to its own leaf look and size. The modded bundle(s) are parked"
+Write-Host "beside the game folder as .modified-<timestamp> if you want to re-apply quickly."

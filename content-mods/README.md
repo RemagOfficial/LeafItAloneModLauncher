@@ -108,9 +108,12 @@ Revert-Mod -Name "bag-capacity"     # restores byte-identical original + unregis
   a repacked bundle with a stale CRC makes the game **hang on a black screen**
   ("CRC Mismatch ... Will not load AssetBundle" in `Player.log`). Any mod that
   replaces a bundle must also zero that bundle's CRC — reuse
-  [`bag-capacity/patch_catalog.py`](bag-capacity/patch_catalog.py) (guarded:
-  unique anchor + adjacent size) and register `catalog.bin` alongside the bundle
-  so revert restores both.
+  [`bag-capacity/patch_catalog_null.py`](bag-capacity/patch_catalog_null.py),
+  which locates the bundle's record from its own **filename/GUID/size on disk**
+  (never a hardcoded CRC — those change with every game update) and refuses on
+  ambiguity, and register `catalog.bin` alongside the bundle
+  so revert restores both. Resolve bundle paths by `<prefix>_*.bundle` globs for
+  the same update-robustness reason (filename GUIDs also rehash on updates).
 - **Ship no game files.** Bundle-editing patches run on the user's own
   bundles. Only `patch.py` and the scripts are published.
 - **Externalise the numbers.** Each mod reads a `<mod>.json` config (a

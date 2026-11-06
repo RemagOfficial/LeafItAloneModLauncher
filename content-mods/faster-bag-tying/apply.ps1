@@ -17,7 +17,10 @@
 #
 # This game loads bundles through Unity Addressables, which CRC-verifies every
 # bundle against catalog.bin and silently hangs on a mismatch, so the mod also
-# nulls THIS bundle's catalog CRC (0 = "skip the check") - see patch_catalog.py.
+# nulls THIS bundle's catalog CRC (0 = "skip the check") - see
+# patch_catalog_null.py, which locates the record from the bundle's own
+# filename/GUID/size on disk, so a game update that rehashes the CRC cannot
+# break it (nothing is hardcoded).
 #
 #   1. Import the deployed SDK and refuse if the game is running.
 #   2. Assert-SafeBaseActive + Assert-SafePreconditions (safety verified now).
@@ -38,8 +41,6 @@ param(
     [switch]$AlsoEmptying,                    # also scale emptyingDuration by the same per-bag ratio
     [string]$BundlePath,                      # override auto-detected bundle
     [string]$CatalogPath,                     # override auto-detected catalog.bin
-    [string]$VanillaCrc = '88295665',         # the actors bundle's CRC in catalog.bin on a stock install
-    [int]$VanillaSize = 27021,                # the actors bundle's VANILLA file size (constant catalog anchor)
     [string]$Python = 'C:\Python312\python.exe', # pinned interpreter (3.14 breaks UnityPy)
     [switch]$Yes
 )
@@ -63,12 +64,32 @@ Assert-SafePreconditions         # throws unless every safety layer is healthy n
 
 # 2. resolve the target bundle and the Addressables catalog.
 $modName    = 'faster-bag-tying'
-$modVersion = '1.0.0'
+$modVersion = '1.1.0'
 $gameFolder = if ($BundlePath) { $null } elseif ($m.gameExe) { Split-Path -Parent $m.gameExe } else { $null }
-$bundleRel  = 'Leaf it Alone_Data\StreamingAssets\aa\StandaloneWindows64\coreassets_assets_actors_3f08c135ba3f70dc386f83f20db5b74e.bundle'
 if (-not $BundlePath) {
     if (-not $gameFolder) { throw "manifest has no gameExe to locate the game folder; pass -BundlePath." }
-    $BundlePath = Join-Path $gameFolder $bundleRel
+    # GLOB by stable prefix: a game update can rehash the <guid> in the bundle
+    # filename, so never pin the exact name. When an update leaves BOTH the old
+    # and the new bundle on disk, the catalog stores the live one as a PATH entry
+    # ("\...\<name>.bundle") - prefer those, then newest mtime.
+    $aaDirLive = Join-Path $gameFolder 'Leaf it Alone_Data\StreamingAssets\aa\StandaloneWindows64'
+    $catFile = Join-Path (Split-Path -Parent $aaDirLive) 'catalog.bin'
+    $catalogText = $null
+    if (Test-Path -LiteralPath $catFile) {
+        $catalogText = [System.Text.Encoding]::GetEncoding(28591).GetString([System.IO.File]::ReadAllBytes($catFile))
+    }
+    $hits = @(Get-ChildItem -LiteralPath $aaDirLive -Filter 'coreassets_assets_actors_*.bundle' -File -ErrorAction SilentlyContinue |
+              Sort-Object LastWriteTime -Descending)
+    if ($hits.Count -gt 1 -and $catalogText) {
+        $ref = @($hits | Where-Object { $catalogText.Contains('\' + $_.Name) })
+        if ($ref.Count -ge 1) { $hits = $ref }
+    }
+    if ($hits.Count -eq 0) {
+        Write-Error "no coreassets_assets_actors_*.bundle found in:`n  $aaDirLive`nGame may have updated or is installed elsewhere. Pass -BundlePath."
+        exit 4
+    }
+    if ($hits.Count -gt 1) { Write-Warning "$($hits.Count) actors bundles on disk (an update can leave the old one); using the newest: $($hits[0].Name)" }
+    $BundlePath = $hits[0].FullName
 }
 if (-not $CatalogPath) {
     # catalog.bin sits at <...>/StreamingAssets/aa/catalog.bin, two levels above the bundle
@@ -168,7 +189,7 @@ if ($existing.Count -gt 0) {
 Write-Host ""
 Write-Host "faster-bag-tying apply" -ForegroundColor Cyan
 Write-Host "  bundle   : $BundlePath"
-Write-Host "  catalog  : $CatalogPath  (nulls this bundle's CRC $VanillaCrc so Addressables loads the repack)"
+Write-Host "  catalog  : $CatalogPath  (nulls this bundle's CRC record so Addressables loads the repack)"
 Write-Host "  seconds  : small=$($targets.small)  medium=$($targets.medium)  big=$($targets.big)  giant=$($targets.giant)"
 Write-Host "  emptying : $(if ($alsoEmpty) { 'also scaled by the same ratio' } else { 'left at vanilla' })"
 Write-Host "  source   : $sizeSource"
@@ -182,14 +203,14 @@ if (-not $Yes) {
 # 5. stage the patch. The patcher validates the vanilla input and verifies its
 # own output; a non-zero exit means the game folder was never touched.
 $patcher    = Join-Path $PSScriptRoot 'patch_faster_bag_tying.py'
-$catPatcher = Join-Path $PSScriptRoot 'patch_catalog.py'
+$catPatcher = Join-Path $PSScriptRoot 'patch_catalog_null.py'
 if (-not (Test-Path -LiteralPath $patcher))    { throw "patcher missing at $patcher" }
 if (-not (Test-Path -LiteralPath $catPatcher)) { throw "catalog patcher missing at $catPatcher" }
 $staging = Join-Path ([System.IO.Path]::GetTempPath()) ("leaf-bagtie-" + [guid]::NewGuid().ToString('N'))
 New-Item -Path $staging -ItemType Directory -Force | Out-Null
 
-# the catalog record is confirmed against the constant vanilla size ($VanillaSize),
-# not the live file size, so this stays correct when another mod shares the bundle.
+# the catalog record is located update-robustly from the bundle's own
+# filename/GUID/size, so nothing about the install needs to be pinned here.
 $recBundle = $null; $recCatalog = $null
 try {
     Write-Host "[patch] running UnityPy patcher into staging..." -ForegroundColor Cyan
@@ -214,12 +235,12 @@ try {
     $recCatalog = Backup-Original -ModName $modName -TargetPath $CatalogPath
 
     try {
-        # 7. null this bundle's CRC in the catalog so Addressables skips the check.
-        #    --expect-size is the constant vanilla size and --allow-absent makes
-        #    this idempotent, so it's fine if sakura-petals-everywhere (same bundle)
-        #    already zeroed this record.
-        Write-Host "[catalog] nullifying this bundle's CRC ($VanillaCrc)..." -ForegroundColor Cyan
-        $catOut = & $Python $catPatcher --catalog $CatalogPath --crc $VanillaCrc --expect-size $VanillaSize --allow-absent
+        # 7. null this bundle's CRC in the catalog so Addressables skips the
+        #    check. patch_catalog_null locates the record from the bundle's own
+        #    filename/GUID/size (no hardcoded CRC), is idempotent, and refuses
+        #    on ambiguity - so it's fine if a prior run already zeroed it.
+        Write-Host "[catalog] nullifying this bundle's CRC (update-robust, filename/GUID-anchored)..." -ForegroundColor Cyan
+        $catOut = & $Python $catPatcher --catalog $CatalogPath --bundle-path $BundlePath
         $catCode = $LASTEXITCODE
         Write-Host $catOut
         if ($catCode -ne 0) { throw "catalog patcher exited $catCode" }

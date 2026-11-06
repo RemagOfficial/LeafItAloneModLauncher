@@ -139,10 +139,23 @@ function Install-SteamProxy {
     New-Item -Path $BackupDir -ItemType Directory -Force | Out-Null
     $backup = Join-Path $BackupDir 'steam_api64.dll'
 
-    # Refuse to overwrite an existing backup - means a previous install is
-    # still active or the user has stray state.
+    # A leftover backup usually means a previous install is still active (the
+    # manifest check upstream already refuses that case) OR that a game
+    # update / Steam verify overwrote our proxy with the real DLL and an
+    # uninstall therefore preserved the backup instead of restoring over it.
+    # Self-heal that orphan: the live DLL is the genuine article, so the
+    # stale backup is redundant - archive it with a timestamp (NEVER delete)
+    # and proceed with a fresh install.
     if (Test-Path -LiteralPath $backup) {
-        throw "backup already exists at $backup. Uninstall first."
+        $liveKind = Classify-SteamDll -Path $RealDllPath -ProxySha (Get-FileSha256 -Path $ProxySource)
+        if ($liveKind -eq 'real') {
+            $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
+            $stale = Join-Path $BackupDir "steam_api64.dll.stale-$stamp"
+            Move-Item -LiteralPath $backup -Destination $stale -Force
+            Write-Warning "Orphaned real-DLL backup from a prior install (a game update had restored the genuine steam_api64.dll) archived to $stale; continuing with a fresh backup."
+        } else {
+            throw "backup already exists at $backup. Uninstall first."
+        }
     }
 
     Move-Item -LiteralPath $RealDllPath -Destination $backup -Force

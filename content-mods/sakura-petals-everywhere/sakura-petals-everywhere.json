@@ -1,7 +1,7 @@
 {
   "_comment": "sakura-petals-everywhere config. Edit this file, then run apply.ps1 (it reverts to the prior state and re-patches automatically). apply.ps1 CLI flags (-All / -Hometown / -Castle) override what's here.",
 
-  "_notes": "Each flag turns the sakura petal leaf prefab on for that world. Only the leaf LOOK changes; leaf counts, scatter positions and bounds stay per-world. The sakura map is always petals, so it has no flag.",
+  "_notes": "hometown/castle turn the sakura petal material on for that world. Only the leaf LOOK changes; leaf counts, scatter positions and bounds stay per-world. The sakura map is always petals, so it has no flag.",
 
   "hometown": true,
   "castle": true
