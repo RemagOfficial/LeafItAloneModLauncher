@@ -41,6 +41,21 @@ public sealed class ModManifest
     [JsonPropertyName("revert")] public CommandSpec Revert { get; set; } = new();
 
     [JsonPropertyName("requires")] public Requires Requires { get; set; } = new();
+
+    /// <summary>
+    /// Mod-sources (2a R1): optional provenance fields. Third-party mod authors ship
+    /// these in their <c>mod.json</c> so the launcher can show a compat hint when the
+    /// mod is listed from a source repo. They never block install; the launcher only
+    /// reads them for UI and for the trust modal. Empty string means "unspecified",
+    /// which the browser treats as "compatible with anything at this SHA".
+    /// </summary>
+    [JsonPropertyName("sourceRepo")] public string SourceRepo { get; set; } = "";
+
+    /// <summary>Minimum launcher version this mod was tested against, e.g. "1.1.0".</summary>
+    [JsonPropertyName("minLauncherVersion")] public string MinLauncherVersion { get; set; } = "";
+
+    /// <summary>Game version string this mod was authored against, e.g. "1.1.7".</summary>
+    [JsonPropertyName("gameVersion")] public string GameVersion { get; set; } = "";
 }
 
 /// <summary>The <c>config</c> block: a flat list of editor fields (plan "config: a tiny schema list").</summary>

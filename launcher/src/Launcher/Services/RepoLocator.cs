@@ -30,6 +30,34 @@ public sealed class RepoLocator
     public string? LastError { get; private set; }
 
     /// <summary>
+    /// Mod-sources (2a R3): the per-user tree where installed remote mods live.
+    /// Independent of the app root because it must survive launcher upgrades and
+    /// not require writing into Program Files. Auto-created on first use so a
+    /// fresh install just works; layout is <c>remote-mods/&lt;sourceKey&gt;/&lt;modId&gt;/</c>.
+    /// </summary>
+    public static string RemoteModsRoot
+    {
+        get
+        {
+            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            var path = System.IO.Path.Combine(local, "LeafItAloneSafe", "remote-mods");
+            try { System.IO.Directory.CreateDirectory(path); } catch { /* read-only profile is fine, discovery handles the missing dir */ }
+            return path;
+        }
+    }
+
+    /// <summary>
+    /// Locate the install directory for a specific remote mod. Creates it if missing.
+    /// Callers (RemoteModStager) use this so path rules live in one place.
+    /// </summary>
+    public static string RemoteModFolder(string sourceKey, string modId)
+    {
+        var path = System.IO.Path.Combine(RemoteModsRoot, sourceKey, modId);
+        try { System.IO.Directory.CreateDirectory(path); } catch { }
+        return path;
+    }
+
+    /// <summary>
     /// Resolve the app root from <paramref name="start"/> (default: the executable
     /// folder) walking upward. Returns true when a root with a <c>content-mods</c>
     /// directory and an engine marker is found.

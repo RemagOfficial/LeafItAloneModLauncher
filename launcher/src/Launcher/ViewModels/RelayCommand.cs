@@ -1,4 +1,5 @@
 using System;
+using System.Windows;
 using System.Windows.Input;
 
 namespace LeafItAlone.Launcher.ViewModels;
@@ -21,6 +22,21 @@ public sealed class RelayCommand : ICommand
 
     public void Execute(object? parameter) => _execute(parameter);
 
-    /// <summary>Raise <see cref="CanExecuteChanged"/> after state the gate depends on changes.</summary>
-    public void RefreshCanExecute() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
+    /// <summary>
+    /// Raise <see cref="CanExecuteChanged"/> after state the gate depends on changes.
+    /// Marshalled to the UI thread when called from a worker: WPF's CommandManager
+    /// hook asserts thread affinity, so a stray <c>ConfigureAwait(false)</c> in an
+    /// async command body would otherwise crash the process. The dispatcher check
+    /// makes that class of bug non-fatal.
+    /// </summary>
+    public void RefreshCanExecute()
+    {
+        var disp = Application.Current?.Dispatcher;
+        if (disp is not null && !disp.CheckAccess())
+        {
+            disp.BeginInvoke(new Action(RefreshCanExecute));
+            return;
+        }
+        CanExecuteChanged?.Invoke(this, EventArgs.Empty);
+    }
 }

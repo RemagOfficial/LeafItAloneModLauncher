@@ -21,6 +21,7 @@ public sealed class MainViewModel : ObservableObject
 {
     private readonly RepoLocator _locator = new();
     private readonly ModDiscovery _discovery = new();
+    private readonly CompositeModDiscovery _compositeDiscovery = new();
     private readonly ProcessRunner _runner = new();
     private readonly ApplyOrchestrator _ops;
     private SafeBaseService? _safeBase;
@@ -32,6 +33,13 @@ public sealed class MainViewModel : ObservableObject
     private string _statePath = "";
     private AppConfig _config = new();
     private string _configPath = "";
+
+    // ---- Mod-sources (2a): shared plumbing wired once per Rescan() ----
+    private SourceRegistry _sources = SourceRegistry.CreateDefault();
+    private string _sourcesPath = "";
+    private GitHubApi? _gitApi;
+    private GitHubSourceService? _gitSource;
+    private RemoteModStager? _stager;
 
     public MainViewModel()
     {
@@ -59,6 +67,14 @@ public sealed class MainViewModel : ObservableObject
         SelectAccentCommand = new RelayCommand(p => { if (p is string s) AccentChoice = s; });
         ClearLogCommand = new RelayCommand(_ => { LogLines.Clear(); Log("output cleared"); });
 
+        // Mod-sources (2a R4/R5): commands wired to async implementations below.
+        RefreshSourcesCommand = new RelayCommand(async _ => await RefreshSourcesAsync(), _ => !IsBusy && !BrowseBusy);
+        AddSourceCommand = new RelayCommand(async _ => await AddSourceAsync(), _ => !IsBusy && !string.IsNullOrWhiteSpace(NewSourceUrl) && _config.AllowNonDefaultSources);
+        RemoveSourceCommand = new RelayCommand(async _ => await RemoveSourceAsync(), _ => !IsBusy && SelectedSource is not null);
+        InstallRemoteCommand = new RelayCommand(async _ => await InstallRemoteAsync(), _ => !IsBusy && SelectedBrowse is not null && !BrowseBusy);
+        OpenRemoteModsFolderCommand = new RelayCommand(_ => OpenRemoteModsFolder());
+        SetModsPageModeCommand = new RelayCommand(p => { if (p is string s) ModsPageMode = s; });
+
         _runner.LineReceived += AppendLog;   // fires on a worker thread; marshalled in AppendLog
 
         // Load the app's own preferences before the first scan: the theme is already
@@ -66,6 +82,9 @@ public sealed class MainViewModel : ObservableObject
         // Rescan() can honour it, and the Settings page binds to these values.
         _configPath = AppConfig.DefaultPath();
         _config = AppConfig.Load(_configPath);
+        _sourcesPath = SourceRegistry.DefaultPath();
+        _sources = SourceRegistry.Load(_sourcesPath);
+        RebuildSourcesList();
 
         Rescan();
     }
@@ -73,6 +92,65 @@ public sealed class MainViewModel : ObservableObject
 
     public ObservableCollection<ConfigEditorViewModel> Editors { get; } = new();
     public ObservableCollection<string> LogLines { get; } = new();
+
+    // ---- Mod-sources (2a R4): data-driven UI surfaces for the Browse + Settings tabs. ----
+    public ObservableCollection<SourceItem> Sources { get; } = new();
+    public ObservableCollection<BrowseItem> BrowseItems { get; } = new();
+    private bool _browseBusy;
+    public bool BrowseBusy { get => _browseBusy; set => Set(ref _browseBusy, value); }
+    private string _browseStatus = "no source fetched yet";
+    public string BrowseStatus { get => _browseStatus; set => Set(ref _browseStatus, value); }
+    private string _newSourceUrl = "";
+    public string NewSourceUrl { get => _newSourceUrl; set => Set(ref _newSourceUrl, value); }
+    private string _newSourceRef = "";
+    public string NewSourceRef { get => _newSourceRef; set => Set(ref _newSourceRef, value); }
+    private SourceItem? _selectedSource;
+    public SourceItem? SelectedSource { get => _selectedSource; set => Set(ref _selectedSource, value); }
+    private BrowseItem? _selectedBrowse;
+    public BrowseItem? SelectedBrowse { get => _selectedBrowse; set => Set(ref _selectedBrowse, value); }
+
+    public RelayCommand RefreshSourcesCommand { get; private set; } = null!;
+    public RelayCommand AddSourceCommand { get; private set; } = null!;
+    public RelayCommand RemoveSourceCommand { get; private set; } = null!;
+    public RelayCommand InstallRemoteCommand { get; private set; } = null!;
+    public RelayCommand OpenRemoteModsFolderCommand { get; private set; } = null!;
+
+    /// <summary>
+    /// Raised when the trust modal (R5) needs to run before an install proceeds.
+    /// The View owns the dialog and returns whether the user typed INSTALL.
+    /// Null = no gate (used in tests); a null handler is treated as "user approved".
+    /// </summary>
+    public System.Func<ModSource, RemoteModEntry, System.Threading.Tasks.Task<bool>>? RequestTrustApproval { get; set; }
+
+    /// <summary>True when the current AppConfig lets the user add non-default sources.</summary>
+    public bool AllowNonDefaultSources => _config.AllowNonDefaultSources;
+
+    public string AllowNonDefaultSourcesToggle
+    {
+        get => _config.AllowNonDefaultSources ? "true" : "false";
+        set
+        {
+            var on = string.Equals(value, "true", System.StringComparison.OrdinalIgnoreCase);
+            if (_config.AllowNonDefaultSources == on) return;
+            _config.AllowNonDefaultSources = on;
+            SaveConfig();
+            OnPropertyChanged(nameof(AllowNonDefaultSources));
+            OnPropertyChanged(nameof(AllowNonDefaultSourcesToggle));
+            Log($"[settings] allow non-default sources -> {(on ? "ON" : "OFF")}");
+            RefreshSourcesCommand.RefreshCanExecute();
+        }
+    }
+
+    /// <summary>The rate-limit line shown under the Browse tab (updated after each fetch).</summary>
+    private string _gitHubRateLine = "";
+    public string GitHubRateLine { get => _gitHubRateLine; private set => Set(ref _gitHubRateLine, value); }
+
+    /// <summary>Which Mods-page sub-panel is visible: "installed" (default) or "browse".</summary>
+    private string _modsPageMode = "installed";
+    public string ModsPageMode { get => _modsPageMode; set { if (Set(ref _modsPageMode, value)) { OnPropertyChanged(nameof(ShowInstalledPanel)); OnPropertyChanged(nameof(ShowBrowsePanel)); } } }
+    public bool ShowInstalledPanel => _modsPageMode == "installed";
+    public bool ShowBrowsePanel => _modsPageMode == "browse";
+    public RelayCommand SetModsPageModeCommand { get; private set; } = null!;
 
     private ConfigEditorViewModel? _selectedEditor;
     public ConfigEditorViewModel? SelectedEditor
@@ -408,19 +486,48 @@ public sealed class MainViewModel : ObservableObject
         _statePath = LauncherState.DefaultPath();
         _state = LauncherState.Load(_statePath);
 
+        // Mod-sources (2a): load the source list next to state.json so Browse/Install
+        // has its data ready before the first UI refresh. The GitHub services are
+        // created lazily - only when the user actually hits Browse or Apply on a
+        // remote mod do we need them - but the stager wiring happens here so
+        // ApplyOneAsync always sees a non-null hook.
+        _sourcesPath = SourceRegistry.DefaultPath();
+        _sources = SourceRegistry.Load(_sourcesPath);
+        _gitApi ??= new GitHubApi();
+        _gitSource ??= new GitHubSourceService(_gitApi);
+        _stager ??= new RemoteModStager(_gitApi, _gitSource);
+        _ops.EnsurePresentHook = EnsureRemotePresentAsync;
+
         // The engine folder (safe-base/ or tools/) holds install/status/uninstall-all.
         _safeBase = new SafeBaseService(_runner, _locator.SafeBaseDir);
         RefreshSafeBaseState();
         RaiseGameExeDisplay();
 
-        var result = _discovery.Discover(_locator.ModsRoot!);
+        // Discovery now merges the built-in content-mods/ with every installed remote
+        // mod under remote-mods/<sourceKey>/. We feed it the (key,url,path) triples so
+        // the wrapped ModInfo carries the source URL for the Details pane.
+        var remoteRoots = BuildRemoteTriples();
+        var result = _compositeDiscovery.Discover(_locator.ModsRoot!, remoteRoots);
         foreach (var err in result.Errors) Log("[manifest error] " + err);
 
         Editors.Clear();
         foreach (var mod in result.Mods)
         {
-            var editor = new ConfigEditorViewModel(mod, Log);
-            editor.ApplyState(_state.For(mod.Id));
+            // Fill SourceSha from state so the badge can show "installed at abc123"
+            // without hitting the network. Composite discovery has no state access.
+            var st = _state.For(mod.Id);
+            var displayMod = mod;
+            if (mod.IsRemote && st.Remote is not null && string.IsNullOrEmpty(mod.SourceSha))
+            {
+                displayMod = new ModInfo(mod.Manifest, mod.Folder, mod.ManifestPath)
+                {
+                    SourceKey = mod.SourceKey,
+                    SourceUrl = string.IsNullOrEmpty(mod.SourceUrl) ? st.Remote.SourceUrl : mod.SourceUrl,
+                    SourceSha = st.Remote.Sha,
+                };
+            }
+            var editor = new ConfigEditorViewModel(displayMod, Log);
+            editor.ApplyState(st);
             editor.PropertyChanged += (_, e) => OnEditorPropertyChanged(editor, e.PropertyName);
             Editors.Add(editor);
         }
@@ -781,6 +888,232 @@ public sealed class MainViewModel : ObservableObject
     }
 
     private void Log(string line) => AppendLog(line);
+
+    // ---- Mod-sources (2a R4/R5): command bodies ----
+
+    private void RebuildSourcesList()
+    {
+        Sources.Clear();
+        foreach (var s in _sources.Sources) Sources.Add(new SourceItem(s));
+    }
+
+    /// <summary>
+    /// Fetch every enabled source's mod listing and rebuild <see cref="BrowseItems"/>.
+    /// Sequential to keep the request rate small; sources that fail show a per-row
+    /// error rather than aborting the whole sweep.
+    /// </summary>
+    private async System.Threading.Tasks.Task RefreshSourcesAsync()
+    {
+        if (_gitSource is null || _gitApi is null) { BrowseStatus = "network stack not initialised"; return; }
+        BrowseBusy = true;
+        BrowseItems.Clear();
+        var totalMods = 0;
+        try
+        {
+            var builtInIds = new System.Collections.Generic.HashSet<string>(
+                Editors.Where(e => !e.Mod.IsRemote).Select(e => e.Mod.Id),
+                System.StringComparer.OrdinalIgnoreCase);
+            foreach (var src in Sources)
+            {
+                if (!src.Source.Enabled) continue;
+                Log($"[sources] refreshing {src.Source.Key} @ {src.Source.Url}");
+                try
+                {
+                    // No ConfigureAwait(false): the continuations touch UI-affine
+                    // state (BrowseItems ObservableCollection, RelayCommand.CanExecute-
+                    // Changed, SourceItem.Refresh which raises PropertyChanged that
+                    // WPF bindings listen to). Staying on the captured WPF
+                    // SynchronizationContext keeps all of that on the UI thread.
+                    var snap = await _gitSource.FetchListingsAsync(src.Source);
+                    src.Source.LastFetchedUtc = snap.FetchedUtc.ToString("o");
+                    src.Source.LastSha = snap.Sha;
+                    src.Refresh();
+                    foreach (var err in snap.Errors) Log("[sources]   " + err);
+                    foreach (var entry in snap.Mods)
+                    {
+                        var installed = _state.For(entry.Id).Remote;
+                        var sameSha = installed is not null
+                                      && string.Equals(installed.SourceKey, snap.SourceKey, System.StringComparison.OrdinalIgnoreCase)
+                                      && string.Equals(installed.Sha, snap.Sha, System.StringComparison.OrdinalIgnoreCase);
+                        var update = installed is not null && !sameSha;
+                        BrowseItems.Add(new BrowseItem
+                        {
+                            SourceKey = snap.SourceKey,
+                            SourceUrl = src.Source.Url,
+                            SourceShortSha = Short(snap.Sha),
+                            Entry = entry,
+                            CollidesWithBuiltIn = builtInIds.Contains(entry.Id),
+                            InstalledAtSameSha = sameSha,
+                            UpdateAvailable = update,
+                        });
+                        totalMods++;
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    Log("[sources]   refresh failed: " + ex.Message);
+                }
+            }
+            try { _sources.Save(_sourcesPath); }
+            catch (System.Exception ex) { Log("[sources] save failed: " + ex.Message); }
+            var remaining = _gitApi.LastRateLimit.Remaining;
+            GitHubRateLine = remaining > 0 ? $"GitHub API: {remaining} req/hr remaining" : "";
+            BrowseStatus = $"{BrowseItems.Count} mod(s) available across {Sources.Count} source(s) ({totalMods} fetched)";
+        }
+        finally
+        {
+            BrowseBusy = false;
+            RefreshSourcesCommand.RefreshCanExecute();
+            InstallRemoteCommand.RefreshCanExecute();
+        }
+    }
+
+    private async System.Threading.Tasks.Task AddSourceAsync()
+    {
+        if (!_config.AllowNonDefaultSources)
+        {
+            Log("[sources] refused: 'Allow non-default sources' is OFF in Settings");
+            return;
+        }
+        if (!ModSource.TryParseOwnerRepo(NewSourceUrl, out _, out _))
+        {
+            Log($"[sources] not a GitHub repo URL: {NewSourceUrl}");
+            return;
+        }
+        var s = new ModSource
+        {
+            Key = ModSource.DeriveKey(NewSourceUrl),
+            Url = NewSourceUrl.Trim(),
+            RefName = (NewSourceRef ?? "").Trim(),
+            Enabled = true,
+            Trusted = false,   // R5: prompt for INSTALL on first download
+        };
+        _sources.Sources.Add(s);
+        _sources.Normalize();
+        try { _sources.Save(_sourcesPath); }
+        catch (System.Exception ex) { Log("[sources] save failed: " + ex.Message); return; }
+        RebuildSourcesList();
+        NewSourceUrl = ""; NewSourceRef = "";
+        Log($"[sources] added {s.Key}");
+        await RefreshSourcesAsync();
+    }
+
+    private async System.Threading.Tasks.Task RemoveSourceAsync()
+    {
+        var sel = SelectedSource;
+        if (sel is null) return;
+        _sources.Sources.RemoveAll(x => string.Equals(x.Key, sel.Source.Key, System.StringComparison.OrdinalIgnoreCase));
+        try { _sources.Save(_sourcesPath); }
+        catch (System.Exception ex) { Log("[sources] save failed: " + ex.Message); return; }
+        RebuildSourcesList();
+        Log($"[sources] removed {sel.Source.Key}. Installed files stay under remote-mods/{sel.Source.Key}/ and mods already enabled keep working.");
+        await System.Threading.Tasks.Task.CompletedTask;
+    }
+
+    private async System.Threading.Tasks.Task InstallRemoteAsync()
+    {
+        var row = SelectedBrowse;
+        if (row is null || _stager is null) return;
+        var src = _sources.FindByKey(row.SourceKey);
+        if (src is null) { Log("[install] source not registered: " + row.SourceKey); return; }
+        if (row.HasManifestError) { Log($"[install] refused: {row.Entry.ManifestError}"); return; }
+        if (row.CollidesWithBuiltIn) { Log($"[install] refused: '{row.Id}' is a built-in mod"); return; }
+
+        // R5: trust gate for untrusted (third-party) sources.
+        if (!src.Trusted && RequestTrustApproval is not null)
+        {
+            var ok = await RequestTrustApproval(src, row.Entry);
+            if (!ok) { Log("[install] cancelled at trust prompt"); return; }
+            src.Trusted = true;
+            _sources.Save(_sourcesPath);
+            RebuildSourcesList();
+        }
+
+        BrowseBusy = true;
+        try
+        {
+            Log($"[install] fetching {row.Id} from {src.Url}@{row.SourceShortSha}");
+            var snap = await _gitSource!.FetchListingsAsync(src);
+            var entry = snap.Mods.FirstOrDefault(m => string.Equals(m.Id, row.Id, System.StringComparison.OrdinalIgnoreCase));
+            if (entry is null) { Log("[install] mod disappeared from the source listing"); return; }
+            var builtInIds = Editors.Where(e => !e.Mod.IsRemote).Select(e => e.Mod.Id);
+            var dest = RepoLocator.RemoteModFolder(src.Key, row.Id);
+            var res = await _stager.InstallAsync(src, snap, entry, _state, builtInIds, _statePath);
+            Log("[install] " + res.Message);
+            if (res.Ok)
+            {
+                // Push source's SHA forward so the badge clears on the next refresh.
+                src.LastSha = snap.Sha;
+                src.LastFetchedUtc = snap.FetchedUtc.ToString("o");
+                _sources.Save(_sourcesPath);
+                RebuildSourcesList();
+                Rescan();
+            }
+        }
+        catch (System.Exception ex) { Log("[install] error: " + ex.Message); }
+        finally { BrowseBusy = false; }
+    }
+
+    private static void OpenRemoteModsFolder()
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = RepoLocator.RemoteModsRoot,
+                UseShellExecute = true,
+            });
+        }
+        catch (System.Exception ex) { Console.WriteLine("open folder failed: " + ex.Message); }
+    }
+
+    private static string Short(string sha) => string.IsNullOrEmpty(sha) ? "" : sha[..System.Math.Min(7, sha.Length)];
+
+    /// <summary>
+    /// Mod-sources (2a): enumerate every source that currently has an installed mod
+    /// under <c>remote-mods/&lt;key&gt;/</c> so CompositeModDiscovery can pick up the tree
+    /// with proper URLs. Sources with no installed folder are skipped here (they
+    /// still appear in the Browse tab, just not in the Mods list).
+    /// </summary>
+    private System.Collections.Generic.IEnumerable<(string SourceKey, string Url, string Path)> BuildRemoteTriples()
+    {
+        var root = RepoLocator.RemoteModsRoot;
+        if (!System.IO.Directory.Exists(root))
+            return System.Array.Empty<(string, string, string)>();
+        var list = new System.Collections.Generic.List<(string, string, string)>();
+        foreach (var dir in System.IO.Directory.EnumerateDirectories(root))
+        {
+            var key = System.IO.Path.GetFileName(dir);
+            var src = _sources.FindByKey(key);
+            var url = src?.Url ?? "";
+            list.Add((key, url, dir));
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// Hook called by <see cref="ApplyOrchestrator"/> before running apply.ps1. Returns
+    /// Ok=true for built-in mods (nothing to heal). For remote mods it consults the
+    /// recorded per-file SHA manifest and re-downloads anything the user removed or
+    /// that drifted; a hard failure aborts the apply with a readable message.
+    /// </summary>
+    private async System.Threading.Tasks.Task<(bool Ok, string Message)> EnsureRemotePresentAsync(ModInfo mod)
+    {
+        if (!mod.IsRemote) return (true, "");
+        if (_stager is null) return (false, "remote mod stager not initialised (internal error)");
+        try
+        {
+            var res = await _stager.EnsurePresentAsync(mod, _state, _sources, _statePath,
+                progress: new Progress<string>(Log));
+            if (!res.Ok) return (false, res.Message);
+            if (res.FilesWritten > 0) Log("[heal] " + res.Message);
+            return (true, res.Message);
+        }
+        catch (Exception ex)
+        {
+            return (false, "ensure-present failed: " + ex.Message);
+        }
+    }
 
     /// <summary>Thread-safe append; runner events arrive on background threads.</summary>
     private void AppendLog(string line)

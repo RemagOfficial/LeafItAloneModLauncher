@@ -53,6 +53,14 @@ public sealed class AppConfig
     /// </summary>
     [JsonPropertyName("gameExeOverride")] public string GameExeOverride { get; set; } = "";
 
+    /// <summary>
+    /// Mod-sources (2a R5): when false (the default), the launcher refuses to add
+    /// third-party sources and Browse shows only the built-in repo. Users flip this
+    /// on deliberately from Settings -> Mod sources to install scripts authored
+    /// elsewhere. Never affects applying built-in mods.
+    /// </summary>
+    [JsonPropertyName("allowNonDefaultSources")] public bool AllowNonDefaultSources { get; set; }
+
     public static string DefaultPath()
     {
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);

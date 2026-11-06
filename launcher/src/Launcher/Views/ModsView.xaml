@@ -2,13 +2,39 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="280" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
+        <!-- Panel switcher (2a R4): Installed mods vs Browse online. -->
+        <StackPanel Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="2,0,2,10">
+            <RadioButton GroupName="modspanel" Content="Installed" Margin="0,0,8,0" Padding="12,4"
+                         IsChecked="{Binding ShowInstalledPanel, Mode=OneWay}"
+                         Command="{Binding SetModsPageModeCommand}" CommandParameter="installed" />
+            <RadioButton GroupName="modspanel" Content="Browse online" Margin="0,0,16,0" Padding="12,4"
+                         IsChecked="{Binding ShowBrowsePanel, Mode=OneWay}"
+                         Command="{Binding SetModsPageModeCommand}" CommandParameter="browse" />
+            <Button Content="Refresh sources" Style="{StaticResource GhostButtonStyle}"
+                    Command="{Binding RefreshSourcesCommand}"
+                    Visibility="{Binding ShowBrowsePanel, Converter={StaticResource BoolVis}}" />
+            <TextBlock VerticalAlignment="Center" Margin="12,0,0,0"
+                       Foreground="{DynamicResource TextMutedBrush}"
+                       Visibility="{Binding ShowBrowsePanel, Converter={StaticResource BoolVis}}"
+                       Text="{Binding BrowseStatus}" />
+            <TextBlock VerticalAlignment="Center" Margin="12,0,0,0"
+                       Foreground="{DynamicResource TextMutedBrush}"
+                       Visibility="{Binding ShowBrowsePanel, Converter={StaticResource BoolVis}}"
+                       Text="{Binding GitHubRateLine}" />
+        </StackPanel>
+
         <!-- Mod list: rounded selection + pending chip, driven straight from Editors. -->
-        <Border Grid.Column="0" Style="{StaticResource Card}" Padding="8">
+        <Border Grid.Row="1" Grid.Column="0" Style="{StaticResource Card}" Padding="8"
+                Visibility="{Binding ShowInstalledPanel, Converter={StaticResource BoolVis}}">
             <ListBox ItemsSource="{Binding Editors}"
                      SelectedItem="{Binding SelectedEditor}"
                      HorizontalContentAlignment="Stretch"
@@ -39,20 +65,68 @@
                                     </TextBlock.Style>
                                 </TextBlock>
                             </StackPanel>
-                            <Border Grid.Column="1" Background="{DynamicResource ChipBgBrush}" CornerRadius="9"
-                                    Padding="8,1" VerticalAlignment="Center"
-                                    Visibility="{Binding IsPending, Converter={StaticResource BoolVis}}">
-                                <TextBlock Text="pending" FontSize="11" Foreground="{DynamicResource ChipFgBrush}" />
-                            </Border>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <!-- 2a R4: remote badge on the left of the pending chip. -->
+                                <Border Background="{DynamicResource ChipBgBrush}" CornerRadius="9" Padding="8,1" Margin="0,0,6,0"
+                                        Visibility="{Binding Mod.IsRemote, Converter={StaticResource BoolVis}}"
+                                        ToolTip="Installed from a mod-source repo. Files under remote-mods/.">
+                                    <TextBlock Text="remote" FontSize="11" Foreground="{DynamicResource ChipFgBrush}" />
+                                </Border>
+                                <Border Background="{DynamicResource ChipBgBrush}" CornerRadius="9"
+                                        Padding="8,1"
+                                        Visibility="{Binding IsPending, Converter={StaticResource BoolVis}}">
+                                    <TextBlock Text="pending" FontSize="11" Foreground="{DynamicResource ChipFgBrush}" />
+                                </Border>
+                            </StackPanel>
                         </Grid>
                     </DataTemplate>
                 </ListBox.ItemTemplate>
             </ListBox>
         </Border>
 
-        <!-- Detail pane: the schema-driven editor for the selected mod. -->
-        <ScrollViewer Grid.Column="1" Margin="14,0,4,0" VerticalScrollBarVisibility="Auto"
-                      DataContext="{Binding SelectedEditor}">
+        <!-- Browse online list (2a R4): one row per remote mod, Install/Update buttons. -->
+        <Border Grid.Row="1" Grid.Column="0" Style="{StaticResource Card}" Padding="8"
+                Visibility="{Binding ShowBrowsePanel, Converter={StaticResource BoolVis}}">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <ListBox Grid.Row="0" ItemsSource="{Binding BrowseItems}" SelectedItem="{Binding SelectedBrowse}"
+                         HorizontalContentAlignment="Stretch"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Margin="2">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13" />
+                                        <TextBlock Text="{Binding Version}" FontSize="11"
+                                                   Foreground="{DynamicResource TextMutedBrush}" />
+                                    </StackPanel>
+                                    <Border Grid.Column="1" Background="{DynamicResource ChipBgBrush}" CornerRadius="9" Padding="8,1" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding StatusBadge}" FontSize="11" Foreground="{DynamicResource ChipFgBrush}" />
+                                    </Border>
+                                </Grid>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                <Button Grid.Row="1" Content="Install / Update selected" Style="{StaticResource PrimaryButtonStyle}"
+                        Margin="0,8,0,0" HorizontalAlignment="Stretch"
+                        Command="{Binding InstallRemoteCommand}" />
+            </Grid>
+        </Border>
+
+        <!-- Detail pane: the schema-driven editor for the selected mod (Installed), or the
+             description + provenance for the selected Browse row. -->
+        <ScrollViewer Grid.Row="1" Grid.Column="1" Margin="14,0,4,0" VerticalScrollBarVisibility="Auto"
+                      DataContext="{Binding SelectedEditor}"
+                      Visibility="{Binding DataContext.ShowInstalledPanel, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolVis}}">
             <StackPanel>
                 <TextBlock Text="{Binding Mod.Name}" FontSize="20" FontWeight="SemiBold" />
                 <TextBlock Text="{Binding Mod.Version}" Foreground="{DynamicResource TextMutedBrush}" />
@@ -175,6 +249,34 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Browse detail pane (2a R4): description + provenance for the selected row. -->
+        <ScrollViewer Grid.Row="1" Grid.Column="1" Margin="14,0,4,0" VerticalScrollBarVisibility="Auto"
+                      DataContext="{Binding SelectedBrowse}"
+                      Visibility="{Binding DataContext.ShowBrowsePanel, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolVis}}">
+            <StackPanel>
+                <TextBlock Text="{Binding Name}" FontSize="20" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding Version}" Foreground="{DynamicResource TextMutedBrush}" />
+                <TextBlock TextWrapping="Wrap" Margin="0,8,0,0" Style="{StaticResource SecondaryText}"
+                           Text="{Binding Description}" />
+                <Border Style="{StaticResource Card}" Margin="0,16,0,0" Padding="14">
+                    <StackPanel>
+                        <TextBlock Text="Provenance" FontWeight="SemiBold" />
+                        <TextBlock TextWrapping="Wrap" Margin="0,4,0,0" Style="{StaticResource MutedText}">
+                            <Run Text="Source: " /><Run Text="{Binding SourceUrl, Mode=OneWay}" />
+                        </TextBlock>
+                        <TextBlock TextWrapping="Wrap" Margin="0,2,0,0" Style="{StaticResource MutedText}">
+                            <Run Text="Commit: @ " /><Run Text="{Binding SourceShortSha, Mode=OneWay}" />
+                        </TextBlock>
+                        <TextBlock TextWrapping="Wrap" Margin="0,2,0,0" Style="{StaticResource MutedText}">
+                            <Run Text="Status: " /><Run Text="{Binding StatusBadge, Mode=OneWay}" />
+                        </TextBlock>
+                        <TextBlock TextWrapping="Wrap" Margin="0,10,0,0" Style="{StaticResource MutedText}"
+                                   Text="Installing a remote mod copies its scripts onto your disk; they only run when you press Apply on the Installed tab." />
                     </StackPanel>
                 </Border>
             </StackPanel>

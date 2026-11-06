@@ -1,0 +1,12 @@
+# Leaf it Alone mod source - nothing game-specific belongs here.
+*.bundle
+*.bundle.backup
+*.assets
+*.resS
+*.unity
+catalog.bin
+*.log
+__pycache__/
+*.pyc
+.venv/
+venv/

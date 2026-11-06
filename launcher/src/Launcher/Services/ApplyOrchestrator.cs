@@ -51,6 +51,14 @@ public sealed class ApplyOrchestrator
     /// </summary>
     public bool PythonReady { get; set; } = true;
 
+    /// <summary>
+    /// Mod-sources (2a R3): hook the VM sets so a remote mod's missing files are healed
+    /// before <see cref="ApplyAsync"/> shells out to <c>apply.ps1</c>. The hook receives
+    /// the mod, returns a short message the caller logs, and Ok=false aborts the apply.
+    /// Left null in tests and for built-in-mod-only installs.
+    /// </summary>
+    public Func<ModInfo, Task<(bool Ok, string Message)>>? EnsurePresentHook { get; set; }
+
     public static string SafeBaseRoot => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LeafItAloneSafe");
 
@@ -122,8 +130,19 @@ public sealed class ApplyOrchestrator
         if (!args.Contains("-Yes", StringComparer.OrdinalIgnoreCase)) args.Add("-Yes");
     }
 
-    public Task<ProcessResult> ApplyAsync(ModInfo mod)
-        => _runner.RunPowerShellScriptAsync(mod.ApplyScript, BuildApplyArgs(mod), workingDir: mod.Folder);
+    public async Task<ProcessResult> ApplyAsync(ModInfo mod)
+    {
+        // Mod-sources R3: heal any missing/mismatched remote files before shelling out.
+        // A built-in mod has no SourceKey so the hook short-circuits to Ok; a remote
+        // mod that fails verification aborts the apply with a readable Fault so the
+        // user is never left running scripts we can't account for.
+        if (EnsurePresentHook is not null)
+        {
+            var (ok, message) = await EnsurePresentHook(mod).ConfigureAwait(false);
+            if (!ok) return new ProcessResult(-1, TimedOut: false, Fault: message);
+        }
+        return await _runner.RunPowerShellScriptAsync(mod.ApplyScript, BuildApplyArgs(mod), workingDir: mod.Folder).ConfigureAwait(false);
+    }
 
     public Task<ProcessResult> RevertAsync(ModInfo mod)
         => _runner.RunPowerShellScriptAsync(mod.RevertScript, BuildRevertArgs(mod), workingDir: mod.Folder);

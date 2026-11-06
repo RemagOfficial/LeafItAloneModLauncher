@@ -1,0 +1,33 @@
+{
+  "id": "sample-bigger-bags",
+  "name": "Sample: Bigger small bags",
+  "version": "1.0.0",
+  "description": "Reference mod that raises the small bag's leaf capacity from 4 to 8. Shows the file layout the launcher's Browse tab expects from a third-party source.",
+  "homepage": "https://github.com/your-username/your-mod-source-repo",
+  "order": 100,
+
+  "sourceRepo": "your-username/your-mod-source-repo",
+  "minLauncherVersion": "1.1.0",
+  "gameVersion": "1.1.7",
+
+  "configPath": "%LOCALAPPDATA%\\LeafItAloneSafe\\sample-bigger-bags.json",
+  "config": {
+    "fields": [
+      {
+        "key": "smallCapacity",
+        "label": "Small bag capacity",
+        "type": "int",
+        "min": 4,
+        "max": 32,
+        "step": 1,
+        "default": 8,
+        "help": "How many leaves fit in a small bag before it must be emptied."
+      }
+    ]
+  },
+
+  "apply":  { "script": "apply.ps1",  "args": [] },
+  "revert": { "script": "revert.ps1", "args": [] },
+
+  "requires": { "safeBase": true, "gameNotRunning": true, "python": true }
+}

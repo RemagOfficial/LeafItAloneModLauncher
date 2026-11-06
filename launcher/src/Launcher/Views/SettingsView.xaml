@@ -142,6 +142,74 @@
                 </StackPanel>
             </Border>
 
+            <!-- Mod sources (2a R4): list of GitHub repos the Browse tab fetches from. -->
+            <Border Style="{StaticResource Card}" Margin="0,14,0,0">
+                <StackPanel>
+                    <TextBlock Text="Mod sources" Style="{StaticResource SectionTitle}" />
+                    <TextBlock Style="{StaticResource MutedText}" Margin="0,4,0,10" TextWrapping="Wrap"
+                               Text="GitHub repositories the launcher can browse and install mods from. Removing a source does not delete already-installed files." />
+
+                    <CheckBox Margin="0,0,0,10" FontWeight="SemiBold"
+                              IsChecked="{Binding AllowNonDefaultSources, Mode=OneWay}"
+                              Content="Allow installs from non-default sources"
+                              ToolTip="Off = you can only browse the built-in RemagOfficial repo. Turning this on lets you add third-party repos below." />
+
+                    <ListBox ItemsSource="{Binding Sources}" SelectedItem="{Binding SelectedSource}"
+                             MaxHeight="180" Margin="0,0,0,8"
+                             HorizontalContentAlignment="Stretch">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="{Binding Url}" FontWeight="SemiBold" FontSize="13" />
+                                        <TextBlock FontSize="11" Foreground="{DynamicResource TextMutedBrush}">
+                                            <Run Text="{Binding RefName, Mode=OneWay}" /><Run Text="  @  " /><Run Text="{Binding LastShortSha, Mode=OneWay}" /><Run Text="   fetched: " /><Run Text="{Binding LastFetched, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <Border Grid.Column="1" VerticalAlignment="Center" Background="{DynamicResource ChipBgBrush}" CornerRadius="9" Padding="8,1"
+                                            Visibility="{Binding Trusted, Converter={StaticResource BoolVis}}">
+                                        <TextBlock Text="trusted" FontSize="11" Foreground="{DynamicResource ChipFgBrush}" />
+                                    </Border>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <DockPanel LastChildFill="True" Margin="0,0,0,6">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Button Content="Add" Style="{StaticResource SecondaryButtonStyle}" Margin="8,0,0,0"
+                                    Command="{Binding AddSourceCommand}" />
+                        </StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="180" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox Grid.Column="0" Text="{Binding NewSourceUrl, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                     ToolTip="https://github.com/owner/repo (or owner/repo)" />
+                            <TextBox Grid.Column="1" Margin="8,0,0,0" Text="{Binding NewSourceRef, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                     ToolTip="branch or tag (optional)" />
+                        </Grid>
+                    </DockPanel>
+
+                    <WrapPanel>
+                        <Button Content="Refresh all" Style="{StaticResource PrimaryButtonStyle}" Margin="0,0,8,4"
+                                Command="{Binding RefreshSourcesCommand}" />
+                        <Button Content="Remove selected" Style="{StaticResource DangerButtonStyle}" Margin="0,0,8,4"
+                                Command="{Binding RemoveSourceCommand}" />
+                        <Button Content="Open remote-mods folder" Style="{StaticResource GhostButtonStyle}" Margin="0,0,8,4"
+                                Command="{Binding OpenRemoteModsFolderCommand}"
+                                ToolTip="Delete an installed mod by hand: browse to its folder here and remove it." />
+                    </WrapPanel>
+                    <TextBlock Style="{StaticResource MutedText}" Margin="0,6,0,0"
+                               Text="The launcher never deletes mod files. Delete the folder in remote-mods/&lt;sourceKey&gt;/&lt;modId&gt;/ if you want to remove a mod; it will re-download automatically the next time you press Apply." />
+                </StackPanel>
+            </Border>
+
         </StackPanel>
     </ScrollViewer>
 </UserControl>

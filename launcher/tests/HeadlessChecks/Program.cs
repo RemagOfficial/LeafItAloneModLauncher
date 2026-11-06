@@ -42,6 +42,14 @@ internal static class Program
         CheckGameExeOverride();
         CheckThemeMath();
         CheckThemeTokenParity();
+        // Mod-sources (2a R1-R5): manifest optional fields, source registry, path
+        // derivation, git blob sha + self-heal manifest round-trip. No network.
+        CheckModManifestOptionalFields();
+        CheckModSourceDeriveKey();
+        CheckSourceRegistryRoundTrip();
+        CheckLauncherStateRemoteRoundTrip();
+        CheckGitBlobShaMatchesKnownVectors();
+        CheckCompositeDiscoveryDeduplicates();
         ProcessRunnerCheck().GetAwaiter().GetResult();
         OrchestratorRunCheck().GetAwaiter().GetResult();
 
@@ -70,7 +78,7 @@ internal static class Program
             "ids: " + string.Join(", ", result.Mods.Select(m => m.Id)));
         if (bag is null) return;
 
-        Assert(bag.Version == "1.2.0", "version is 1.2.0", bag.Version);
+        Assert(bag.Version == "1.3.0", "version is 1.3.0", bag.Version);
         Assert(bag.Order == 10, "order is 10", bag.Order.ToString());
         Assert(bag.Manifest.Config.Fields.Count == 6, "6 config fields", bag.Manifest.Config.Fields.Count.ToString());
 
@@ -116,7 +124,7 @@ internal static class Program
             "ids: " + string.Join(", ", result.Mods.Select(m => m.Id)));
         if (leaves is null) return;
 
-        Assert(leaves.Version == "1.3.1", "more-leaves version 1.3.1", leaves.Version);
+        Assert(leaves.Version == "1.4.0", "more-leaves version 1.4.0", leaves.Version);
         Assert(leaves.Order == 20, "more-leaves order 20", leaves.Order.ToString());
 
         // Discovery sorts by order then name: bag-capacity (10) must come before more-leaves (20).
@@ -844,6 +852,187 @@ internal static class Program
             Requires = new Requires { SafeBase = false, GameNotRunning = false, Python = python },
         };
         return new ModInfo(manifest, folder, Path.Combine(folder, "mod.json"));
+    }
+
+    // ---- Mod-sources (2a) headless checks: no network, no game files ----
+
+    /// <summary>
+    /// The three optional fields (sourceRepo, minLauncherVersion, gameVersion)
+    /// parse from a manifest and default to empty when absent. Discovery tolerates
+    /// legacy manifests without them so no shipped mod needs to change.
+    /// </summary>
+    private static void CheckModManifestOptionalFields()
+    {
+        const string legacy = "{\"id\":\"a\",\"name\":\"A\",\"version\":\"1\",\"description\":\"\",\"configPath\":\"\",\"apply\":{\"script\":\"apply.ps1\"},\"revert\":{\"script\":\"revert.ps1\"}}";
+        const string modern = "{\"id\":\"a\",\"name\":\"A\",\"version\":\"1\",\"description\":\"\",\"configPath\":\"\",\"apply\":{\"script\":\"apply.ps1\"},\"revert\":{\"script\":\"revert.ps1\"},\"sourceRepo\":\"me/repo\",\"minLauncherVersion\":\"1.1.0\",\"gameVersion\":\"1.1.7\"}";
+        var opts = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var m1 = System.Text.Json.JsonSerializer.Deserialize<ModManifest>(legacy, opts)!;
+        var m2 = System.Text.Json.JsonSerializer.Deserialize<ModManifest>(modern, opts)!;
+        Assert(m1.SourceRepo == "" && m1.MinLauncherVersion == "" && m1.GameVersion == "",
+            "legacy manifest defaults to empty provenance", $"{m1.SourceRepo}|{m1.MinLauncherVersion}|{m1.GameVersion}");
+        Assert(m2.SourceRepo == "me/repo" && m2.MinLauncherVersion == "1.1.0" && m2.GameVersion == "1.1.7",
+            "modern manifest parses optional provenance fields", $"{m2.SourceRepo}|{m2.MinLauncherVersion}|{m2.GameVersion}");
+    }
+
+    private static void CheckModSourceDeriveKey()
+    {
+        var cases = new (string input, string expected)[]
+        {
+            ("https://github.com/RemagOfficial/LeafItAloneModLauncher", "remagofficial__leafitalonemodlauncher"),
+            ("https://github.com/RemagOfficial/LeafItAloneModLauncher.git", "remagofficial__leafitalonemodlauncher"),
+            ("https://github.com/RemagOfficial/LeafItAloneModLauncher/", "remagofficial__leafitalonemodlauncher"),
+            ("RemagOfficial/LeafItAloneModLauncher", "remagofficial__leafitalonemodlauncher"),
+            ("https://github.com/some-user/some-repo/tree/main/content-mods", "some-user__some-repo"),
+        };
+        foreach (var (input, expected) in cases)
+        {
+            var got = ModSource.DeriveKey(input);
+            Assert(got == expected, $"DeriveKey: {input}", $"expected {expected}, got {got}");
+        }
+        Assert(ModSource.TryParseOwnerRepo("https://github.com/foo/bar", out var o, out var r) && o == "foo" && r == "bar",
+            "TryParseOwnerRepo full URL", $"{o}/{r}");
+        Assert(ModSource.TryParseOwnerRepo("foo/bar", out o, out r) && o == "foo" && r == "bar",
+            "TryParseOwnerRepo shorthand", $"{o}/{r}");
+        Assert(!ModSource.TryParseOwnerRepo("not-a-url", out _, out _),
+            "TryParseOwnerRepo rejects a bare word", "");
+    }
+
+    private static void CheckSourceRegistryRoundTrip()
+    {
+        var tmp = Path.Combine(Path.GetTempPath(), "lia-sources-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            var reg = SourceRegistry.CreateDefault();
+            Assert(reg.Sources.Count == 1, "CreateDefault has the built-in source", reg.Sources.Count.ToString());
+            Assert(reg.Sources[0].Trusted, "built-in source is trusted", "");
+            Assert(reg.Sources[0].Key == "remagofficial__leafitalonemodlauncher",
+                "built-in key derives from url", reg.Sources[0].Key);
+
+            reg.Sources.Add(new ModSource { Key = "someone__repo", Url = "https://github.com/someone/repo", RefName = "v1" });
+            reg.Save(tmp);
+            var loaded = SourceRegistry.Load(tmp);
+            Assert(loaded.Sources.Count == 2, "round-trip preserves both sources", loaded.Sources.Count.ToString());
+            Assert(loaded.FindByKey("someone__repo")?.RefName == "v1", "second source persisted", "");
+
+            // Corrupt file -> defaults (fail-safe).
+            File.WriteAllText(tmp, "{not json");
+            var fell = SourceRegistry.Load(tmp);
+            Assert(fell.Sources.Count == 1 && fell.Sources[0].Trusted, "corrupt file falls back to default", "");
+
+            // Duplicate keys after Normalize: last one wins, so re-adding a source updates it in place.
+            var dup = new SourceRegistry();
+            dup.Sources.Add(new ModSource { Key = "a__b", Url = "https://github.com/a/b" });
+            dup.Sources.Add(new ModSource { Key = "a__b", Url = "https://github.com/a/b", RefName = "second" });
+            dup.Normalize();
+            Assert(dup.Sources.Count == 1 && dup.Sources[0].RefName == "second",
+                "Normalize dedups by key, last-wins", $"count={dup.Sources.Count} ref={dup.Sources[0].RefName}");
+        }
+        finally { try { File.Delete(tmp); } catch { } }
+    }
+
+    private static void CheckLauncherStateRemoteRoundTrip()
+    {
+        var tmp = Path.Combine(Path.GetTempPath(), "lia-state-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            var st = new LauncherState();
+            var ms = st.For("my-remote");
+            ms.Enabled = true;
+            ms.Remote = new RemoteState
+            {
+                SourceKey = "someone__repo",
+                SourceUrl = "https://github.com/someone/repo",
+                Sha = "deadbeefcafebabe1234567890abcdef12345678",
+                InstalledUtc = "2026-11-06T00:00:00Z",
+                FolderPathInRepo = "content-mods/my-remote",
+                FilesManifest = new System.Collections.Generic.Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["mod.json"] = "aaa",
+                    ["apply.ps1"] = "bbb",
+                    ["patch.py"] = "ccc",
+                },
+            };
+            st.Save(tmp);
+            var loaded = LauncherState.Load(tmp);
+            var back = loaded.For("my-remote").Remote;
+            Assert(back is not null, "remote block round-trips", "null");
+            if (back is null) return;
+            Assert(back.Sha == "deadbeefcafebabe1234567890abcdef12345678", "sha preserved", back.Sha);
+            Assert(back.FilesManifest.Count == 3, "3 files in manifest", back.FilesManifest.Count.ToString());
+            Assert(back.FilesManifest["APPLY.PS1"] == "bbb", "manifest is case-insensitive", "");
+            Assert(back.FolderPathInRepo == "content-mods/my-remote", "folder path preserved", back.FolderPathInRepo);
+
+            // A pre-R3 state.json (no remote block) still loads cleanly.
+            var legacyJson = "{\"mods\":{\"old\":{\"enabled\":true}}}";
+            File.WriteAllText(tmp, legacyJson);
+            var legacy = LauncherState.Load(tmp);
+            Assert(legacy.For("old").Remote is null, "legacy state has null Remote", "");
+        }
+        finally { try { File.Delete(tmp); } catch { } }
+    }
+
+    /// <summary>
+    /// The git blob SHA formula must match GitHub's response or the self-heal path
+    /// rejects every cached file. Canonical vectors below are from the git test suite.
+    /// </summary>
+    private static void CheckGitBlobShaMatchesKnownVectors()
+    {
+        // git hash-object on empty content = e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+        Assert(GitHubApi.ComputeGitBlobSha(Array.Empty<byte>()) == "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+            "empty blob sha", GitHubApi.ComputeGitBlobSha(Array.Empty<byte>()));
+        // "hello\n" -> `printf 'hello\n' | git hash-object --stdin`
+        var hello = System.Text.Encoding.UTF8.GetBytes("hello\n");
+        Assert(GitHubApi.ComputeGitBlobSha(hello) == "ce013625030ba8dba906f756967f9e9ca394464a",
+            "\"hello\\n\" blob sha", GitHubApi.ComputeGitBlobSha(hello));
+    }
+
+    /// <summary>
+    /// CompositeModDiscovery must include built-ins, include remote mods, refuse a
+    /// remote whose id collides with a built-in, and prefer built-in over remote on
+    /// that collision. Uses a scratch folder under %TEMP% so it never touches the
+    /// user's real remote-mods/.
+    /// </summary>
+    private static void CheckCompositeDiscoveryDeduplicates()
+    {
+        var scratch = Path.Combine(Path.GetTempPath(), "lia-comp-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var builtIn = Path.Combine(scratch, "content-mods");
+            var remote = Path.Combine(scratch, "remote-mods");
+            Directory.CreateDirectory(Path.Combine(builtIn, "bag-capacity"));
+            Directory.CreateDirectory(Path.Combine(builtIn, "more-leaves"));
+            Directory.CreateDirectory(Path.Combine(remote, "some__repo", "cool-remote"));
+            Directory.CreateDirectory(Path.Combine(remote, "some__repo", "bag-capacity")); // collision!
+
+            // Write minimal valid manifests.
+            File.WriteAllText(Path.Combine(builtIn, "bag-capacity", "mod.json"),
+                "{\"id\":\"bag-capacity\",\"name\":\"Built-in Bag\",\"version\":\"1\",\"description\":\"\",\"configPath\":\"\",\"apply\":{\"script\":\"apply.ps1\"},\"revert\":{\"script\":\"revert.ps1\"}}");
+            File.WriteAllText(Path.Combine(builtIn, "more-leaves", "mod.json"),
+                "{\"id\":\"more-leaves\",\"name\":\"More Leaves\",\"version\":\"1\",\"description\":\"\",\"configPath\":\"\",\"apply\":{\"script\":\"apply.ps1\"},\"revert\":{\"script\":\"revert.ps1\"}}");
+            File.WriteAllText(Path.Combine(remote, "some__repo", "cool-remote", "mod.json"),
+                "{\"id\":\"cool-remote\",\"name\":\"Cool Remote\",\"version\":\"1\",\"description\":\"\",\"configPath\":\"\",\"apply\":{\"script\":\"apply.ps1\"},\"revert\":{\"script\":\"revert.ps1\"}}");
+            File.WriteAllText(Path.Combine(remote, "some__repo", "bag-capacity", "mod.json"),
+                "{\"id\":\"bag-capacity\",\"name\":\"Remote Bag (shadow)\",\"version\":\"1\",\"description\":\"\",\"configPath\":\"\",\"apply\":{\"script\":\"apply.ps1\"},\"revert\":{\"script\":\"revert.ps1\"}}");
+
+            var remoteRoots = new System.Collections.Generic.List<(string, string, string)>
+            {
+                ("some__repo", "https://github.com/some/repo", Path.Combine(remote, "some__repo"))
+            };
+            var result = new CompositeModDiscovery().Discover(builtIn, remoteRoots);
+            var ids = result.Mods.Select(m => m.Id).ToList();
+            Assert(ids.Contains("bag-capacity") && ids.Contains("more-leaves") && ids.Contains("cool-remote"),
+                "composite includes built-in + non-colliding remote", string.Join(",", ids));
+
+            var bag = result.Mods.First(m => m.Id == "bag-capacity");
+            Assert(!bag.IsRemote, "built-in wins over a colliding remote id", $"IsRemote={bag.IsRemote} source={bag.SourceKey}");
+            Assert(result.Errors.Any(e => e.Contains("bag-capacity") && e.Contains("built-in")),
+                "collision reported in errors", string.Join(" | ", result.Errors));
+
+            var cool = result.Mods.First(m => m.Id == "cool-remote");
+            Assert(cool.IsRemote && cool.SourceKey == "some__repo",
+                "remote mod carries its source key", $"IsRemote={cool.IsRemote} key={cool.SourceKey}");
+        }
+        finally { try { Directory.Delete(scratch, true); } catch { } }
     }
 
     private static void Assert(bool ok, string what, string detail = "")
