@@ -107,7 +107,21 @@ public sealed class MainViewModel : ObservableObject
     private SourceItem? _selectedSource;
     public SourceItem? SelectedSource { get => _selectedSource; set => Set(ref _selectedSource, value); }
     private BrowseItem? _selectedBrowse;
-    public BrowseItem? SelectedBrowse { get => _selectedBrowse; set => Set(ref _selectedBrowse, value); }
+    public BrowseItem? SelectedBrowse
+    {
+        get => _selectedBrowse;
+        set
+        {
+            if (Set(ref _selectedBrowse, value))
+            {
+                // CommandManager.RequerySuggested covers user-driven clicks, but
+                // a programmatic setter call (e.g. right after a Refresh leaves
+                // only one row selectable) needs an explicit poke so the
+                // "Install / Update selected" button lights up immediately.
+                InstallRemoteCommand?.RefreshCanExecute();
+            }
+        }
+    }
 
     public RelayCommand RefreshSourcesCommand { get; private set; } = null!;
     public RelayCommand AddSourceCommand { get; private set; } = null!;

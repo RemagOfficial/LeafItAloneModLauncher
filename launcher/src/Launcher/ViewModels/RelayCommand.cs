@@ -16,18 +16,39 @@ public sealed class RelayCommand : ICommand
         _canExecute = canExecute;
     }
 
-    public event EventHandler? CanExecuteChanged;
+    // Back the event with WPF's CommandManager.RequerySuggested so a button
+    // bound to this command auto-updates on every mouse click, keyboard event
+    // and focus change. Without this hook the button only re-checks CanExecute
+    // when we call RefreshCanExecute manually, which meant e.g. the Browse
+    // "Install / Update selected" button stayed greyed out after the user
+    // clicked a ListBox row (nothing in the setter poked the command).
+    private EventHandler? _canExecuteChanged;
+
+    public event EventHandler? CanExecuteChanged
+    {
+        add
+        {
+            _canExecuteChanged += value;
+            CommandManager.RequerySuggested += value;
+        }
+        remove
+        {
+            _canExecuteChanged -= value;
+            CommandManager.RequerySuggested -= value;
+        }
+    }
 
     public bool CanExecute(object? parameter) => _canExecute?.Invoke(parameter) ?? true;
 
     public void Execute(object? parameter) => _execute(parameter);
 
     /// <summary>
-    /// Raise <see cref="CanExecuteChanged"/> after state the gate depends on changes.
-    /// Marshalled to the UI thread when called from a worker: WPF's CommandManager
-    /// hook asserts thread affinity, so a stray <c>ConfigureAwait(false)</c> in an
-    /// async command body would otherwise crash the process. The dispatcher check
-    /// makes that class of bug non-fatal.
+    /// Ask WPF to re-query every command's <see cref="CanExecute"/> on the
+    /// next dispatcher turn. Marshalled to the UI thread when called from a
+    /// worker: WPF's CommandManager asserts thread affinity, so a stray
+    /// <c>ConfigureAwait(false)</c> in an async command body would otherwise
+    /// crash the process. Keeping that check here makes that class of bug
+    /// non-fatal.
     /// </summary>
     public void RefreshCanExecute()
     {
@@ -37,6 +58,9 @@ public sealed class RelayCommand : ICommand
             disp.BeginInvoke(new Action(RefreshCanExecute));
             return;
         }
-        CanExecuteChanged?.Invoke(this, EventArgs.Empty);
+        CommandManager.InvalidateRequerySuggested();
+        // Also raise our own event, in case someone subscribed to it directly
+        // without going through the CommandManager pipe (tests, toolkits).
+        _canExecuteChanged?.Invoke(this, EventArgs.Empty);
     }
 }
