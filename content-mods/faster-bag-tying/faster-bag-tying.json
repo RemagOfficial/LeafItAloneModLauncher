@@ -1,0 +1,18 @@
+{
+  "_comment": "faster-bag-tying config. Edit this file, then run apply.ps1 (it reverts to vanilla and re-patches automatically). apply.ps1 CLI flags override what's here.",
+
+  "mode": "multiplier",
+
+  "_mode_notes": "mode = 'multiplier' uses 'multiplier' on the vanilla tying times 1.0/1.35/1.7/1.8s; mode = 'seconds' uses the four explicit 'seconds' values below.",
+  "multiplier": 0.5,
+
+  "seconds": {
+    "small": 0.5,
+    "medium": 0.68,
+    "big": 0.85,
+    "giant": 0.9
+  },
+
+  "_alsoEmptying_notes": "when true, emptyingDuration (dumping, vanilla 0.8/1.1/1.4/1.5s) is scaled by the same per-bag ratio.",
+  "alsoEmptying": false
+}

@@ -1,0 +1,103 @@
+{
+  "$comment": "Launcher manifest for the faster-bag-tying mod. This file only DESCRIBES the mod; the value store stays the live %LOCALAPPDATA%\\LeafItAloneSafe\\faster-bag-tying.json that apply.ps1 seeds and reads, and apply/revert run the validated scripts. Adding a mod means writing a manifest like this, never new launcher UI code.",
+
+  "id": "faster-bag-tying",
+  "name": "Faster bag tying",
+  "version": "1.0.0",
+  "description": "Makes tying a full leaf bag faster by lowering the base tying time on every bag, from the start instead of waiting for the in-game upgrades. Choose a simple fraction of the vanilla tying time, or set each bag's seconds explicitly. Optionally speed up bag emptying (dumping) too.",
+  "homepage": "",
+  "order": 30,
+
+  "configPath": "%LOCALAPPDATA%\\LeafItAloneSafe\\faster-bag-tying.json",
+
+  "config": {
+    "fields": [
+      {
+        "key": "mode",
+        "label": "Sizing mode",
+        "type": "enum",
+        "options": ["multiplier", "seconds"],
+        "default": "multiplier",
+        "help": "multiplier scales the vanilla tying times (small 1.0s, medium 1.35s, big 1.7s, giant 1.8s); seconds sets each bag explicitly."
+      },
+      {
+        "key": "multiplier",
+        "label": "Tying-time fraction",
+        "type": "float",
+        "min": 0.05,
+        "max": 1,
+        "step": 0.05,
+        "default": 0.5,
+        "help": "Fraction of the vanilla tying time. 0.5 = half the time (2x faster); 1 = no change.",
+        "when": { "key": "mode", "equals": "multiplier" }
+      },
+      {
+        "key": "seconds.small",
+        "label": "Small bag (s)",
+        "type": "float",
+        "min": 0.05,
+        "max": 10,
+        "step": 0.05,
+        "default": 0.5,
+        "help": "Vanilla 1.0s.",
+        "when": { "key": "mode", "equals": "seconds" }
+      },
+      {
+        "key": "seconds.medium",
+        "label": "Medium bag (s)",
+        "type": "float",
+        "min": 0.05,
+        "max": 10,
+        "step": 0.05,
+        "default": 0.68,
+        "help": "Vanilla 1.35s.",
+        "when": { "key": "mode", "equals": "seconds" }
+      },
+      {
+        "key": "seconds.big",
+        "label": "Big bag (s)",
+        "type": "float",
+        "min": 0.05,
+        "max": 10,
+        "step": 0.05,
+        "default": 0.85,
+        "help": "Vanilla 1.7s.",
+        "when": { "key": "mode", "equals": "seconds" }
+      },
+      {
+        "key": "seconds.giant",
+        "label": "Giant bag (s)",
+        "type": "float",
+        "min": 0.05,
+        "max": 10,
+        "step": 0.05,
+        "default": 0.9,
+        "help": "Vanilla 1.8s.",
+        "when": { "key": "mode", "equals": "seconds" }
+      },
+      {
+        "key": "alsoEmptying",
+        "label": "Also speed up bag emptying (dumping)",
+        "type": "bool",
+        "default": false,
+        "help": "Applies the same speed-up ratio to the emptying/dumping time (vanilla 0.8/1.1/1.4/1.5s)."
+      }
+    ]
+  },
+
+  "apply": {
+    "script": "apply.ps1",
+    "args": ["-Yes"]
+  },
+
+  "revert": {
+    "script": "revert.ps1",
+    "args": ["-Yes"]
+  },
+
+  "requires": {
+    "safeBase": true,
+    "gameNotRunning": true,
+    "python": true
+  }
+}
