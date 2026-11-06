@@ -28,6 +28,7 @@ public sealed class ConfigEditorViewModel : ObservableObject
         LivePath = EnvPaths.Expand(mod.Manifest.ConfigPath);
         SaveCommand = new RelayCommand(_ => Save());
         ReloadCommand = new RelayCommand(_ => { Load(); Info = "reloaded from disk"; });
+        ResetCommand = new RelayCommand(_ => ResetToDefaults());
         Fields = new ObservableCollection<ConfigFieldEditor>();
         Load();
     }
@@ -40,6 +41,7 @@ public sealed class ConfigEditorViewModel : ObservableObject
 
     public RelayCommand SaveCommand { get; }
     public RelayCommand ReloadCommand { get; }
+    public RelayCommand ResetCommand { get; }
 
     private string _info = "";
     public string Info { get => _info; set => Set(ref _info, value); }
@@ -117,6 +119,38 @@ public sealed class ConfigEditorViewModel : ObservableObject
     {
         RefreshVisibility();
         RaisePending();
+    }
+
+    /// <summary>
+    /// Restore every schema-described field to its manifest <c>default</c> and save.
+    /// Unknown top-level keys (<c>_comment</c>, <c>_applyHelper</c>, <c>seed</c>, ...)
+    /// are preserved because <see cref="Save"/> only rewrites the described paths. This
+    /// is the fix for "I reinstalled / updated a mod but the live config still holds
+    /// values from the old version" - the on-disk config file is shared across installs
+    /// and downloads never touch it, so it has to be reset explicitly.
+    /// Fields with no declared default are left as-is rather than zeroed.
+    /// </summary>
+    public void ResetToDefaults()
+    {
+        try
+        {
+            int n = 0;
+            foreach (var editor in Fields)
+            {
+                if (editor.Field.Default is null) continue;
+                editor.SetValue(editor.Field.Default);
+                n++;
+            }
+            RefreshVisibility();
+            Save();
+            Info = $"reset {n} field(s) to manifest defaults";
+            _log?.Invoke($"{Mod.Id}: config reset to defaults ({n} field(s))");
+        }
+        catch (Exception ex)
+        {
+            Info = "reset failed: " + ex.Message;
+            _log?.Invoke($"{Mod.Id}: RESET FAILED - {ex.Message}");
+        }
     }
 
     private void RefreshVisibility()

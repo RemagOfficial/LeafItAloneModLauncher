@@ -139,6 +139,8 @@
                 <WrapPanel Margin="0,14,0,0">
                     <Button Content="Save config" Command="{Binding SaveCommand}" Style="{StaticResource PrimaryButtonStyle}" Margin="0,0,8,8" />
                     <Button Content="Reload" Command="{Binding ReloadCommand}" Style="{StaticResource GhostButtonStyle}" Margin="0,0,8,8" />
+                    <Button Content="Reset to defaults" Command="{Binding ResetCommand}" Style="{StaticResource GhostButtonStyle}" Margin="0,0,8,8"
+                            ToolTip="Set every field back to the value its mod.json declares as default. Use this after re-download / update when the config still holds old values. Comment / helper keys are kept." />
                     <!-- Apply/Revert live on the MainViewModel; reach them via the window DataContext. -->
                     <Button Content="Apply to game" Style="{StaticResource SecondaryButtonStyle}" Margin="0,0,8,8"
                             Command="{Binding DataContext.ApplyCommand, RelativeSource={RelativeSource AncestorType=Window}}" />

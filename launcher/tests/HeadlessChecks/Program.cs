@@ -30,6 +30,7 @@ internal static class Program
         CheckConfigStoreRoundTrip();
         CheckConfigEditorRoundTrip();
         CheckConfigFieldDecouple();
+        CheckConfigResetToDefaults();
         CheckPendingLifecycle();
         CheckOrchestratorArgs();
         CheckSequencePlan();
@@ -312,6 +313,51 @@ internal static class Program
             var saved = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
             Assert(Equals(saved["sizes"]?["small"]?.GetValue<int>(), 12345), "save persists out-of-range 12345",
                    saved["sizes"]?["small"]?.ToString() ?? "<null>");
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    /// <summary>
+    /// Reset-to-defaults: after a re-download the live config still holds stale
+    /// values (install never touches the shared per-mod JSON file). Pressing Reset
+    /// must put every schema-described field back to its manifest default, while
+    /// preserving the unknown keys apply.ps1 relies on (_comment, seed, ...).
+    /// </summary>
+    private static void CheckConfigResetToDefaults()
+    {
+        var loc = new RepoLocator();
+        if (!loc.TryLocate(AppContext.BaseDirectory)) { Assert(false, "reset test located content root", loc.LastError ?? ""); return; }
+        var bag = new ModDiscovery().Discover(loc.ModsRoot!).Mods.FirstOrDefault(m => m.Id == "bag-capacity");
+        if (bag is null) { Assert(false, "reset test found bag-capacity"); return; }
+
+        var dir = Path.Combine(Path.GetTempPath(), "leaf-reset-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "bag-capacity.json");
+        try
+        {
+            // A stale config: sizes mode with a huge small value, an odd multiplier,
+            // and an extra key the schema does not describe.
+            File.WriteAllText(path,
+                "{\"_comment\":\"keepme\",\"seed\":42,\"mode\":\"sizes\",\"multiplier\":7.5," +
+                "\"sizes\":{\"small\":9999,\"medium\":8888,\"big\":7777,\"giant\":6666}}");
+
+            bag.Manifest.ConfigPath = path;
+            var editor = new ConfigEditorViewModel(bag);
+
+            editor.ResetToDefaults();
+
+            var saved = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+            Assert(Equals(saved["mode"]?.GetValue<string>(), "multiplier"), "reset restores mode", saved["mode"]?.ToString() ?? "<null>");
+            Assert(Equals(saved["multiplier"]?.GetValue<double>(), 2.0), "reset restores multiplier", saved["multiplier"]?.ToString() ?? "<null>");
+            Assert(Equals(saved["sizes"]?["small"]?.GetValue<int>(), 100), "reset restores sizes.small", saved["sizes"]?["small"]?.ToString() ?? "<null>");
+            Assert(Equals(saved["sizes"]?["giant"]?.GetValue<int>(), 1600), "reset restores sizes.giant", saved["sizes"]?["giant"]?.ToString() ?? "<null>");
+            // Non-schema keys survive.
+            Assert(Equals(saved["_comment"]?.GetValue<string>(), "keepme"), "reset preserves _comment", saved["_comment"]?.ToString() ?? "<null>");
+            Assert(Equals(saved["seed"]?.GetValue<int>(), 42), "reset preserves seed", saved["seed"]?.ToString() ?? "<null>");
+
+            // The in-memory editors reflect the defaults too (UI stays in sync).
+            var small = editor.Fields.First(f => f.Key == "sizes.small");
+            Assert(small.Num == 100, "editor field shows default after reset", small.Num.ToString());
         }
         finally { try { Directory.Delete(dir, true); } catch { } }
     }
