@@ -88,5 +88,13 @@
     "safeBase": true,
     "gameNotRunning": true,
     "python": true
-  }
+  },
+
+  "$patchesComment": "2b conflict detection: the exact engine values this mod rewrites (from patch_bag_capacity.py). Bundle is the stable addressable prefix (the <guid> is globbed at apply time). bag-capacity only touches the four *BagCapacity 'capacity' ints in the coreassets meta bundle, so it never collides with faster-bag-tying (which edits the actors bundle's sealingTime).",
+  "patches": [
+    { "bundle": "coreassets_assets_meta", "asset": "SmallBagCapacity", "field": "capacity" },
+    { "bundle": "coreassets_assets_meta", "asset": "MediumBagCapacity", "field": "capacity" },
+    { "bundle": "coreassets_assets_meta", "asset": "BigBagCapacity", "field": "capacity" },
+    { "bundle": "coreassets_assets_meta", "asset": "GiantBagCapacity", "field": "capacity" }
+  ]
 }

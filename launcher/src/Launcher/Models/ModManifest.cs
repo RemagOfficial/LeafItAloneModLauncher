@@ -43,6 +43,18 @@ public sealed class ModManifest
     [JsonPropertyName("requires")] public Requires Requires { get; set; } = new();
 
     /// <summary>
+    /// 2b conflict detection: the engine assets this mod rewrites, declared by the
+    /// author so the launcher can warn before a risky combine. Each entry is a
+    /// <see cref="PatchTarget"/> triple <c>(bundle, asset, field)</c>. Two enabled
+    /// mods that name the <em>same</em> triple collide ("last-applied wins"); a
+    /// different <c>field</c> on the same actor/bundle does NOT (so bag-capacity and
+    /// faster-bag-tying, both touching the bag actors but different fields, are
+    /// correctly independent). Empty means "undeclared" — the mod simply never
+    /// participates in a conflict warning, exactly like pre-2b manifests.
+    /// </summary>
+    [JsonPropertyName("patches")] public List<PatchTarget> Patches { get; set; } = new();
+
+    /// <summary>
     /// Mod-sources (2a R1): optional provenance fields. Third-party mod authors ship
     /// these in their <c>mod.json</c> so the launcher can show a compat hint when the
     /// mod is listed from a source repo. They never block install; the launcher only
@@ -118,6 +130,52 @@ public sealed class Requires
     [JsonPropertyName("safeBase")] public bool SafeBase { get; set; }
     [JsonPropertyName("gameNotRunning")] public bool GameNotRunning { get; set; }
     [JsonPropertyName("python")] public bool Python { get; set; }
+}
+
+/// <summary>
+/// 2b: one declared patch target — a coarse, human-readable pointer at an engine
+/// asset the mod rewrites. All parts are optional strings so a mod can be as
+/// specific as it likes (a full <c>bundle/asset/field</c>) or leave a part blank
+/// when it does not apply (e.g. a whole-bundle swap has no single <c>field</c>).
+/// The launcher only compares the normalised <see cref="Key"/> triple, so two mods
+/// that spell the same target identically collide and everything else does not.
+/// </summary>
+public sealed class PatchTarget
+{
+    /// <summary>The Unity addressable bundle (e.g. <c>coreassets.assets</c>, <c>scenes</c>, <c>leaves</c>).</summary>
+    [JsonPropertyName("bundle")] public string Bundle { get; set; } = "";
+
+    /// <summary>The asset / object inside the bundle (e.g. an actor or scene type name).</summary>
+    [JsonPropertyName("asset")] public string Asset { get; set; } = "";
+
+    /// <summary>The specific field on that asset (e.g. <c>LeafBagBehaviourSettings.sealingTime</c>).</summary>
+    [JsonPropertyName("field")] public string Field { get; set; } = "";
+
+    /// <summary>
+    /// The normalised comparison key. Case- and whitespace-insensitive so authors
+    /// cannot accidentally dodge a collision by capitalising differently; a blank
+    /// part stays blank (it is still part of the tuple, keeping
+    /// <c>bundle+asset+""</c> distinct from <c>bundle+asset+field</c>).
+    /// </summary>
+    public string Key =>
+        string.Join("\u241F",
+            (Bundle ?? "").Trim().ToLowerInvariant(),
+            (Asset ?? "").Trim().ToLowerInvariant(),
+            (Field ?? "").Trim().ToLowerInvariant());
+
+    /// <summary>True when at least one part is populated (a wholly-empty entry is ignored).</summary>
+    public bool IsMeaningful =>
+        !string.IsNullOrWhiteSpace(Bundle) || !string.IsNullOrWhiteSpace(Asset) || !string.IsNullOrWhiteSpace(Field);
+
+    /// <summary>Human-readable form for the warning text ("field in asset (bundle)").</summary>
+    public string Describe()
+    {
+        var parts = new System.Collections.Generic.List<string>();
+        if (!string.IsNullOrWhiteSpace(Field)) parts.Add(Field.Trim());
+        if (!string.IsNullOrWhiteSpace(Asset)) parts.Add("on " + Asset.Trim());
+        if (!string.IsNullOrWhiteSpace(Bundle)) parts.Add("in " + Bundle.Trim());
+        return parts.Count == 0 ? "(unspecified target)" : string.Join(" ", parts);
+    }
 }
 
 /// <summary>String constants for the supported field <c>type</c> values.</summary>

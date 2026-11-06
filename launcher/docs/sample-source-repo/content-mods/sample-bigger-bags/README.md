@@ -24,3 +24,7 @@ value (default 8).
   what the launcher's built-in sakura-petals mod does.
 - It never calls out to the network. Any mod you publish that does should say so in
   the README and in the mod's `description` field so the trust modal makes it obvious.
+- Its `mod.json` declares a `patches[]` entry (`coreassets_assets_meta` /
+  `SmallBagCapacity` / `capacity`). Because that is the same value the built-in
+  *Bigger leaf bags* mod edits, enabling both together shows the launcher's conflict
+  warning - a worked example of the [patches spec](../../../MOD_SOURCE_SPEC.md#conflict-detection-patches).

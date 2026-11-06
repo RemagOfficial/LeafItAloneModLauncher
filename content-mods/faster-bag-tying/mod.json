@@ -99,5 +99,17 @@
     "safeBase": true,
     "gameNotRunning": true,
     "python": true
-  }
+  },
+
+  "$patchesComment": "2b conflict detection (from patch_faster_bag_tying.py): rewrites the LeafBagBehaviourSettings.sealingTime on the four bag actors in the coreassets ACTORS bundle (and, only when alsoEmptying is on, emptyingDuration). Different bundle AND different field than bag-capacity's meta-bundle capacity ints, so the two bag mods correctly never report a conflict.",
+  "patches": [
+    { "bundle": "coreassets_assets_actors", "asset": "SmallLeafBag", "field": "LeafBagBehaviourSettings.sealingTime" },
+    { "bundle": "coreassets_assets_actors", "asset": "MediumLeafBag", "field": "LeafBagBehaviourSettings.sealingTime" },
+    { "bundle": "coreassets_assets_actors", "asset": "BigLeafBag", "field": "LeafBagBehaviourSettings.sealingTime" },
+    { "bundle": "coreassets_assets_actors", "asset": "GiantLeafBag", "field": "LeafBagBehaviourSettings.sealingTime" },
+    { "bundle": "coreassets_assets_actors", "asset": "SmallLeafBag", "field": "LeafBagBehaviourSettings.emptyingDuration" },
+    { "bundle": "coreassets_assets_actors", "asset": "MediumLeafBag", "field": "LeafBagBehaviourSettings.emptyingDuration" },
+    { "bundle": "coreassets_assets_actors", "asset": "BigLeafBag", "field": "LeafBagBehaviourSettings.emptyingDuration" },
+    { "bundle": "coreassets_assets_actors", "asset": "GiantLeafBag", "field": "LeafBagBehaviourSettings.emptyingDuration" }
+  ]
 }

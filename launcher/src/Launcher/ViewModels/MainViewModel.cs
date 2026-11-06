@@ -104,6 +104,17 @@ public sealed class MainViewModel : ObservableObject
     public ObservableCollection<ConfigEditorViewModel> Editors { get; } = new();
     public ObservableCollection<string> LogLines { get; } = new();
 
+    /// <summary>
+    /// 2b conflict detection: human-readable warnings for engine values that two or
+    /// more *enabled* mods both rewrite, recomputed whenever the enable set changes.
+    /// Empty when nothing collides (the normal case for the shipped mods). Bound to a
+    /// warning card on the Mods page.
+    /// </summary>
+    public ObservableCollection<string> ConflictWarnings { get; } = new();
+
+    /// <summary>True when <see cref="ConflictWarnings"/> has anything to show (drives the card's visibility).</summary>
+    public bool HasConflicts => ConflictWarnings.Count > 0;
+
     // ---- Mod-sources (2a R4): data-driven UI surfaces for the Browse + Settings tabs. ----
     public ObservableCollection<SourceItem> Sources { get; } = new();
     public ObservableCollection<BrowseItem> BrowseItems { get; } = new();
@@ -560,6 +571,8 @@ public sealed class MainViewModel : ObservableObject
         if (!_locator.TryLocate(start))
         {
             Editors.Clear();
+            ConflictWarnings.Clear();
+            OnPropertyChanged(nameof(HasConflicts));
             RootPath = "";
             _safeBase = null;
             _safeBaseInfo = SafeBaseInfo.NotInstalled;
@@ -631,6 +644,7 @@ public sealed class MainViewModel : ObservableObject
             ? $"No mod manifests found at {RootPath}"
             : $"{Editors.Count} mod(s) at {RootPath}";
         RaisePendingCount();
+        RecomputeConflicts();
         RefreshCommands();
     }
 
@@ -642,6 +656,7 @@ public sealed class MainViewModel : ObservableObject
             _state.For(editor.Mod.Id).Enabled = editor.Enabled;
             TrySaveState();
             RaisePendingCount();
+            RecomputeConflicts();
             if (editor == SelectedEditor) RefreshCommands();
         }
         else if (name == nameof(ConfigEditorViewModel.IsPending))
@@ -659,6 +674,27 @@ public sealed class MainViewModel : ObservableObject
     {
         try { _state.Save(_statePath); }
         catch (Exception ex) { Log("state save failed: " + ex.Message); }
+    }
+
+    /// <summary>
+    /// 2b: re-run <see cref="ConflictAnalyzer"/> over the currently-enabled mods and
+    /// refresh <see cref="ConflictWarnings"/>. Cheap (in-memory manifest reads), so it
+    /// runs on every enable toggle and after a rescan. Logs newly-appeared warnings
+    /// once so a risky combine is visible in the console too, not just the card.
+    /// </summary>
+    private void RecomputeConflicts()
+    {
+        var enabled = Editors.Where(e => e.Enabled).Select(e => e.Mod);
+        var conflicts = ConflictAnalyzer.Analyze(enabled);
+
+        var before = ConflictWarnings.Select(w => w).ToHashSet(StringComparer.Ordinal);
+        ConflictWarnings.Clear();
+        foreach (var c in conflicts)
+        {
+            ConflictWarnings.Add(c.Message);
+            if (!before.Contains(c.Message)) Log("[conflict] " + c.Message);
+        }
+        OnPropertyChanged(nameof(HasConflicts));
     }
 
     /// <summary>
@@ -759,6 +795,10 @@ public sealed class MainViewModel : ObservableObject
         IsBusy = true;
         try
         {
+            // 2b: make a risky combine explicit right before touching the game.
+            RecomputeConflicts();
+            foreach (var w in ConflictWarnings) Log("[conflict] " + w);
+
             int changes = 0;
             foreach (var ed in Editors.OrderBy(e => e.Mod.Order))
             {

@@ -128,6 +128,26 @@
                       DataContext="{Binding SelectedEditor}"
                       Visibility="{Binding DataContext.ShowInstalledPanel, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolVis}}">
             <StackPanel>
+                <!-- 2b: conflict card. The warnings live on the MainViewModel (not the
+                     per-mod editor), so reach them through the window; styled like the
+                     pending chip. Only shows when two or more enabled mods patch the
+                     same engine value. -->
+                <Border Style="{StaticResource Card}" Margin="0,0,0,12" Padding="14"
+                        Background="{DynamicResource ChipBgBrush}"
+                        Visibility="{Binding DataContext.HasConflicts, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolVis}}">
+                    <StackPanel>
+                        <TextBlock Text="Potential conflicts" FontWeight="SemiBold" Foreground="{DynamicResource ChipFgBrush}" />
+                        <ItemsControl Margin="0,6,0,0"
+                                      ItemsSource="{Binding DataContext.ConflictWarnings, RelativeSource={RelativeSource AncestorType=Window}}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock TextWrapping="Wrap" Margin="0,2" Foreground="{DynamicResource ChipFgBrush}" Text="{Binding}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
                 <TextBlock Text="{Binding Mod.Name}" FontSize="20" FontWeight="SemiBold" />
                 <TextBlock Text="{Binding Mod.Version}" Foreground="{DynamicResource TextMutedBrush}" />
                 <TextBlock TextWrapping="Wrap" Margin="0,8,0,0" Style="{StaticResource SecondaryText}"

@@ -71,9 +71,49 @@ Optional:
 | `sourceRepo`           | string | `owner/repo` this mod was authored against. Cosmetic only; the launcher already knows the repo it was fetched from. Set it so a mod copied between repos still carries provenance. |
 | `minLauncherVersion`   | string | The lowest launcher version you tested against. The Browse tab warns (does not block) if the user's launcher is older. |
 | `gameVersion`          | string | Game version you authored against, e.g. `"1.1.7"`. Shown as a compat hint. |
+| `patches`              | array  | Declares the engine values this mod rewrites so the launcher can warn about conflicts. See [Conflict detection](#conflict-detection-patches). Optional; omit for no conflict reporting. |
 
 Any unknown JSON field is preserved when the launcher re-reads the manifest, so you can
 add your own keys without breaking discovery.
+
+---
+
+## Conflict detection (`patches[]`)
+
+Because every content mod edits the same handful of Unity asset bundles, two mods can
+rewrite the exact same value. When they do, whichever applied last wins and the other's
+change silently disappears - confusing to debug after the fact. So a mod **declares** what
+it rewrites in an optional `patches` array, and the launcher cross-references the enabled
+set to warn about genuine overlaps on the Mods page and in the log before an Apply.
+
+```jsonc
+"patches": [
+  { "bundle": "coreassets_assets_actors", "asset": "MediumLeafBag", "field": "LeafBagBehaviourSettings.sealingTime" }
+]
+```
+
+| Key      | Type   | Notes |
+|----------|--------|-------|
+| `bundle` | string | The **stable addressable prefix** of the bundle you patch - the part before the re-hashing `<guid>` (e.g. `coreassets_assets_actors`, `scenes_scenes_castle`, `coreassets_assets_scenes`). Do **not** include the guid or `.bundle`; those change on game updates and would defeat the match. |
+| `asset`  | string | The object inside the bundle - typically its `m_Name` (`MediumLeafBag`) or the component type (`Eternity.Gameplay.Leaves.Area`). |
+| `field`  | string | The specific value you write, dotted / indexed as it reads in the typetree (`capacity`, `LeafBagBehaviourSettings.sealingTime`, `initArgs[].leavesCount`). |
+
+How the launcher decides a conflict:
+
+- The comparison key is the **`(bundle, asset, field)` triple**, matched case- and
+  whitespace-insensitively. Two enabled mods that name the **identical** triple collide.
+- A difference in **any one** part means **no** conflict. This is why `bag-capacity`
+  (the `coreassets_assets_meta` bundle's `*BagCapacity.capacity`) and `faster-bag-tying`
+  (the `coreassets_assets_actors` bundle's `*LeafBag.…sealingTime`) never warn even
+  though both "touch the bags" - different bundle, different asset, different field.
+- Declare **only what you actually write**, and write it the way another author would
+  spell the same target so a real collision is caught. Over-declaring fields you merely
+  read produces false alarms; under-declaring hides a genuine clash.
+- `patches` is entirely optional and purely advisory. A mod with none simply never
+  participates in a warning - nothing about install or apply changes.
+
+The built-in mods all declare accurate `patches[]` lifted from their real patchers, so
+they serve as worked examples (note that, as shipped, none of the four collide).
 
 ---
 

@@ -69,5 +69,22 @@
     "safeBase": true,
     "gameNotRunning": true,
     "python": true
-  }
+  },
+
+  "$patchesComment": "2b conflict detection (from patch_leaves/prefab/positions/areas.py): more-leaves grows one coupled leaf budget in lockstep across every source that must agree, so it writes the Area layout's leavesCount + initArgs[].leavesCount in each gameplay scene bundle (and the title-screen menu scene), the same layout in the coreprefabs actor template, the areas registry count, and the InitialLeaves scatter-position bank. All in leaf/scene bundles - none in coreassets_assets_scenes - so it does not collide with sakura-petals-everywhere (which edits the scene-definition material).",
+  "patches": [
+    { "bundle": "scenes_scenes_castle", "asset": "Eternity.Gameplay.Leaves.Area", "field": "leavesCount" },
+    { "bundle": "scenes_scenes_castle", "asset": "Eternity.Gameplay.Leaves.Area", "field": "initArgs[].leavesCount" },
+    { "bundle": "scenes_scenes_hometown", "asset": "Eternity.Gameplay.Leaves.Area", "field": "leavesCount" },
+    { "bundle": "scenes_scenes_hometown", "asset": "Eternity.Gameplay.Leaves.Area", "field": "initArgs[].leavesCount" },
+    { "bundle": "scenes_scenes_sakura", "asset": "Eternity.Gameplay.Leaves.Area", "field": "leavesCount" },
+    { "bundle": "scenes_scenes_sakura", "asset": "Eternity.Gameplay.Leaves.Area", "field": "initArgs[].leavesCount" },
+    { "bundle": "scenes_scenes_menu", "asset": "Eternity.Gameplay.Leaves.Area", "field": "leavesCount" },
+    { "bundle": "coreprefabs_assets_actor", "asset": "Eternity.Gameplay.Leaves.Area", "field": "leavesCount" },
+    { "bundle": "coreprefabs_assets_actor", "asset": "Eternity.Gameplay.Leaves.Area", "field": "initArgs[].leavesCount" },
+    { "bundle": "coreassets_assets_areas", "asset": "LeafAreaRegistry", "field": "leavesCount" },
+    { "bundle": "coreassets_assets_leaves", "asset": "InitialLeaves_Hometown", "field": "scatterPositions" },
+    { "bundle": "coreassets_assets_leaves", "asset": "InitialLeaves_Castle", "field": "scatterPositions" },
+    { "bundle": "coreassets_assets_leaves", "asset": "InitialLeaves_Sakura", "field": "scatterPositions" }
+  ]
 }

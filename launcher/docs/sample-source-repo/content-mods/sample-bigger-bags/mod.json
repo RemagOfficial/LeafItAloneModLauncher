@@ -29,5 +29,9 @@
   "apply":  { "script": "apply.ps1",  "args": [] },
   "revert": { "script": "revert.ps1", "args": [] },
 
-  "requires": { "safeBase": true, "gameNotRunning": true, "python": true }
+  "requires": { "safeBase": true, "gameNotRunning": true, "python": true },
+
+  "patches": [
+    { "bundle": "coreassets_assets_meta", "asset": "SmallBagCapacity", "field": "capacity" }
+  ]
 }

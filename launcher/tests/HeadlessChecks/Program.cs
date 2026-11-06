@@ -51,10 +51,12 @@ internal static class Program
         CheckLauncherStateRemoteRoundTrip();
         CheckGitBlobShaMatchesKnownVectors();
         CheckCompositeDiscoveryDeduplicates();
-        // 2b: version source, self-update compare and the diagnostics exporter's
-        // game-file deny-list. All offline.
+        // 2b: version source, self-update compare, patches[] manifest field, conflict
+        // analyzer, and the diagnostics exporter's game-file deny-list. All offline.
         CheckAppInfoVersion();
         CheckVersionCompare();
+        CheckManifestPatchesField();
+        CheckConflictAnalyzer();
         CheckDiagnosticsZipExcludesGameFiles();
         ProcessRunnerCheck().GetAwaiter().GetResult();
         OrchestratorRunCheck().GetAwaiter().GetResult();
@@ -388,6 +390,87 @@ internal static class Program
         Assert(UpdateChecker.IsNewer("1.2.1", "1.2.0", out var parsed) && parsed.Build == 1, "1.2.1 newer, build parsed");
         Assert(!UpdateChecker.IsNewer("garbage", "1.0.0", out _), "garbage tag -> no update");
         Assert(!UpdateChecker.IsNewer("", "1.0.0", out _), "empty tag -> no update, no throw");
+    }
+
+    /// <summary>patches[] survives manifest deserialization; the real mods declare it.</summary>
+    private static void CheckManifestPatchesField()
+    {
+        // Round-trip a hand-authored manifest through the same case-insensitive options
+        // the discovery path uses, so author spelling/casing variations are covered too.
+        const string json = """
+        { "id": "t", "name": "T", "version": "1.0.0",
+          "patches": [
+            { "bundle": "coreassets_assets_actors", "asset": "SmallLeafBag", "field": "LeafBagBehaviourSettings.sealingTime" },
+            { "Bundle": "CoreAssets_Assets_Actors", "Asset": "BigLeafBag",   "Field": "capacity" }
+          ] }
+        """;
+        var opts = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var m = System.Text.Json.JsonSerializer.Deserialize<ModManifest>(json, opts);
+        Assert(m is { Patches.Count: 2 }, "patches[] deserialized (2 entries)", m?.Patches.Count.ToString() ?? "null");
+        Assert(m!.Patches[0].Field == "LeafBagBehaviourSettings.sealingTime", "patch field preserved", m.Patches[0].Field);
+        // The key normalises case + whitespace per part, so the differently-spelled
+        // bundle in entry [1] matches entry [0]'s bundle segment exactly.
+        var sep = new[] { (char)0x241F };   // the unit-separator joiner PatchTarget.Key uses
+        var seg0 = m.Patches[0].Key.Split(sep);
+        var seg1 = m.Patches[1].Key.Split(sep);
+        Assert(seg0[0] == "coreassets_assets_actors" && seg1[0] == "coreassets_assets_actors",
+            "patch key lower-cases the bundle across spellings", m.Patches[1].Key);
+        Assert(seg0[1] == "smallleafbag" && seg1[1] == "bigleafbag",
+            "patch key keeps distinct assets distinct", m.Patches[0].Key + " vs " + m.Patches[1].Key);
+
+        // The real bag-capacity manifest must declare its four capacity writes.
+        var loc = new RepoLocator();
+        if (loc.TryLocate(AppContext.BaseDirectory))
+        {
+            var bag = new ModDiscovery().Discover(loc.ModsRoot!).Mods.FirstOrDefault(x => x.Id == "bag-capacity");
+            Assert(bag is not null && bag.Manifest.Patches.Count == 4, "real bag-capacity declares 4 patch targets",
+                bag?.Manifest.Patches.Count.ToString() ?? "mod missing");
+            Assert(bag!.Manifest.Patches.All(p => p.Field == "capacity" && p.Bundle.Contains("coreassets")),
+                "bag-capacity patches are capacity in coreassets",
+                string.Join("|", bag.Manifest.Patches.Select(p => p.Bundle + "/" + p.Field)));
+        }
+    }
+
+    /// <summary>The analyzer: same triple => conflict; any part differing => none.</summary>
+    private static void CheckConflictAnalyzer()
+    {
+        var a = FakePatchMod("A", "Mod A", ("coreassets_assets_scenes", "Hometown", "material"));
+        var bSame = FakePatchMod("B", "Mod B", ("coreassets_assets_scenes", "Hometown", "material"));
+        var cDiffField = FakePatchMod("C", "Mod C", ("coreassets_assets_meta", "SmallBagCapacity", "capacity"));
+        var dDiffBundle = FakePatchMod("D", "Mod D", ("scenes_scenes_castle", "SmallBagCapacity", "capacity"));
+
+        var collide = ConflictAnalyzer.Analyze(new[] { a, bSame });
+        Assert(collide.Count == 1, "two mods on the same triple -> one conflict", collide.Count.ToString());
+        Assert(collide.Count == 1 && collide[0].ModNames.SequenceEqual(new[] { "Mod A", "Mod B" }),
+            "conflict names both mods", collide.Count == 1 ? string.Join(",", collide[0].ModNames) : "none");
+        Assert(collide.Count == 1 && collide[0].Message.Contains("last-applied wins"),
+            "conflict message carries the tie-break hint", collide.Count == 1 ? collide[0].Message : "none");
+
+        // bag-capacity vs faster-bag-tying analogue: same asset family, different field => none.
+        var eOtherField = FakePatchMod("E", "Mod E", ("coreassets_assets_meta", "SmallBagCapacity", "sealingTime"));
+        Assert(ConflictAnalyzer.Analyze(new[] { cDiffField, eOtherField }).Count == 0,
+            "same bundle+asset, different field -> no conflict");
+        // Different bundle, same asset+field => none.
+        Assert(ConflictAnalyzer.Analyze(new[] { cDiffField, dDiffBundle }).Count == 0,
+            "different bundle -> no conflict");
+        // Empty / single mod => no conflicts, no throw.
+        Assert(ConflictAnalyzer.Analyze(System.Array.Empty<ModInfo>()).Count == 0, "no mods -> no conflicts");
+        Assert(ConflictAnalyzer.Analyze(new[] { a }).Count == 0, "one mod -> no conflict");
+    }
+
+    private static ModInfo FakePatchMod(string id, string name, (string bundle, string asset, string field) target)
+    {
+        var manifest = new ModManifest
+        {
+            Id = id,
+            Name = name,
+            Version = "1.0.0",
+            Patches =
+            {
+                new PatchTarget { Bundle = target.bundle, Asset = target.asset, Field = target.field },
+            },
+        };
+        return new ModInfo(manifest, Path.GetTempPath(), Path.Combine(Path.GetTempPath(), id, "mod.json"));
     }
 
     /// <summary>

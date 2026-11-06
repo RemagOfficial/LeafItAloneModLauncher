@@ -43,5 +43,11 @@
     "safeBase": true,
     "gameNotRunning": true,
     "python": true
-  }
+  },
+
+  "$patchesComment": "2b conflict detection (from patch_sakura_petals.py): repoints the chosen worlds' LeafSettingsSceneProperty.material at the CherryLeaves material in the coreassets SCENES-definition bundle (only Hometown/Castle are written; Sakura's own entry is the vanilla anchor). It changes no leaf counts or positions, so it does not collide with more-leaves (which edits the gameplay scenes/leaves/areas bundles, not this scene definition).",
+  "patches": [
+    { "bundle": "coreassets_assets_scenes", "asset": "Hometown", "field": "LeafSettingsSceneProperty.material" },
+    { "bundle": "coreassets_assets_scenes", "asset": "Castle", "field": "LeafSettingsSceneProperty.material" }
+  ]
 }
