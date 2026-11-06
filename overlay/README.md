@@ -14,7 +14,12 @@ game, start here.
 the game and watching the live **RAM** value jump (~880 MB → ~1230 MB) as the level loads.
 Recorded straight off the running game.
 
-![Leaf it Alone overlay showcase](leafitalone_overlay_showcase.mp4)
+![Leaf it Alone overlay showcase](overlay-showcase.gif)
+
+*The animated preview above is a GIF — the only animated format GitHub renders inline in
+a README. For the full-quality clip, open
+[`leafitalone_overlay_showcase.mp4`](leafitalone_overlay_showcase.mp4); GitHub plays MP4
+files on the file page.*
 
 ---
 

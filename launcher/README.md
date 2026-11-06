@@ -13,6 +13,16 @@ unchanged.
 > This is the primary path going forward. The manual scripts still work and are
 > documented in `safe-base/README.md` as the advanced / manual appendix.
 
+## Showcase
+
+![Leaf it Alone Mod Launcher walkthrough](media/launcher-showcase.gif)
+
+*23-second walkthrough — Dashboard (Play-first) → the manifest-driven Mods editor →
+the live Light/Dark + accent swap.* The preview above is a GIF because that is the only
+animated format GitHub renders inline in a README. For the full-quality clip, open
+[`media/launcher-showcase.mp4`](media/launcher-showcase.mp4) — GitHub plays MP4 files on
+the file page.
+
 ## Status
 
 Milestones **L1–L9** are complete, including **L8** (distribution polish — the
