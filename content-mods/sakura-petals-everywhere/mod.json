@@ -1,0 +1,47 @@
+{
+  "$comment": "Launcher manifest for the sakura-petals-everywhere mod. This file only DESCRIBES the mod; the value store stays the live %LOCALAPPDATA%\\LeafItAloneSafe\\sakura-petals-everywhere.json that apply.ps1 seeds and reads, and apply/revert run the validated scripts. Adding a mod means writing a manifest like this, never new launcher UI code.",
+
+  "id": "sakura-petals-everywhere",
+  "name": "Sakura petals everywhere",
+  "version": "2.0.0",
+  "description": "Brings the sakura map's special petal leaves into the other worlds. Each world keeps its own leaf counts and scatter, only the leaf material changes to the cherry-petal one (not a particle change; the leaves stay fully pickable).",
+  "homepage": "",
+  "order": 35,
+
+  "configPath": "%LOCALAPPDATA%\\LeafItAloneSafe\\sakura-petals-everywhere.json",
+
+  "config": {
+    "fields": [
+      {
+        "key": "hometown",
+        "label": "Petal leaves in Hometown",
+        "type": "bool",
+        "default": true,
+        "help": "Convert Hometown's leaves to the sakura petal look. Its leaf counts/positions stay the same."
+      },
+      {
+        "key": "castle",
+        "label": "Petal leaves in Castle",
+        "type": "bool",
+        "default": true,
+        "help": "Convert the Castle's leaves to the sakura petal look. Its leaf counts/positions stay the same."
+      }
+    ]
+  },
+
+  "apply": {
+    "script": "apply.ps1",
+    "args": ["-Yes"]
+  },
+
+  "revert": {
+    "script": "revert.ps1",
+    "args": ["-Yes"]
+  },
+
+  "requires": {
+    "safeBase": true,
+    "gameNotRunning": true,
+    "python": true
+  }
+}
