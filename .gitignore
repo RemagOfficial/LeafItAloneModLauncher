@@ -42,6 +42,7 @@ scratch/
 bin/
 obj/
 launcher/publish/
+launcher/publish-selfcontained/
 *.user
 
 # Embedded/portable runtime staged at package time (huge; not source)
