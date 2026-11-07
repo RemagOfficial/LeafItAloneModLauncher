@@ -58,6 +58,7 @@ internal static class Program
         CheckManifestPatchesField();
         CheckConflictAnalyzer();
         CheckDiagnosticsZipExcludesGameFiles();
+        CheckMarkdownParser();
         ProcessRunnerCheck().GetAwaiter().GetResult();
         OrchestratorRunCheck().GetAwaiter().GetResult();
 
@@ -533,6 +534,109 @@ internal static class Program
         }
         finally { try { Directory.Delete(dir, true); } catch { } }
     }
+
+    /// <summary>
+    /// The What's-new markdown reader: exercises the pure parser (no WPF, so safe to run
+    /// off the UI thread) over every construct release notes actually use, and guards the
+    /// one regression that matters here - identifiers like coreassets_assets_actors must
+    /// not be mangled into emphasis.
+    /// </summary>
+    private static void CheckMarkdownParser()
+    {
+        Assert(Markdown.Parse("").Count == 0, "empty markdown -> no blocks");
+        Assert(Markdown.Parse("   \n  ").Count == 0, "whitespace-only markdown -> no blocks");
+
+        var md = string.Join("\n", new[]
+        {
+            "# Release 1.1.0",
+            "",
+            "Adds **bulk apply**, a `patches[]` field and a [homepage](https://example.com/a).",
+            "",
+            "- one",
+            "- two",
+            "",
+            "1. first",
+            "2. second",
+            "",
+            "> a note",
+            "",
+            "```",
+            "print(1)",
+            "```",
+            "",
+            "---",
+        });
+
+        var blocks = Markdown.Parse(md);
+        Assert(blocks.Count == 7, "seven top-level blocks", blocks.Count.ToString());
+        if (blocks.Count != 7) return;
+
+        Assert(blocks[0] is Markdown.HeadingBlock h && h.Level == 1 && Flatten(h.Inlines) == "Release 1.1.0",
+            "block 0 is an H1 heading", blocks[0]?.GetType().Name ?? "null");
+
+        var p = blocks[1] as Markdown.ParagraphBlock;
+        Assert(p is not null, "block 1 is a paragraph", blocks[1]?.GetType().Name ?? "null");
+        Assert(p!.Inlines.Any(i => i is Markdown.BoldInline b && Flatten(b.Children) == "bulk apply"),
+            "paragraph holds a bold run", Flatten(p.Inlines));
+        Assert(p!.Inlines.Any(i => i is Markdown.CodeInline c && c.Text == "patches[]"),
+            "paragraph holds an inline-code run");
+        Assert(p!.Inlines.Any(i => i is Markdown.LinkInline l && l.Url == "https://example.com/a" && Flatten(l.Children) == "homepage"),
+            "paragraph holds a link with its url + text");
+
+        Assert(blocks[2] is Markdown.ListBlock ul && !ul.Ordered && ul.Items.Count == 2,
+            "block 2 is a 2-item bullet list", DescribeList(blocks[2]));
+        Assert(blocks[3] is Markdown.ListBlock ol && ol.Ordered && ol.Items.Count == 2,
+            "block 3 is a 2-item ordered list", DescribeList(blocks[3]));
+
+        Assert(blocks[4] is Markdown.QuoteBlock, "block 4 is a blockquote", blocks[4]?.GetType().Name ?? "null");
+        Assert(blocks[5] is Markdown.CodeBlock cb && cb.Text.Contains("print(1)"),
+            "block 5 is a fenced code block", blocks[5]?.GetType().Name ?? "null");
+        Assert(blocks[6] is Markdown.RuleBlock, "block 6 is a horizontal rule", blocks[6]?.GetType().Name ?? "null");
+
+        // Intraword underscores (every Unity asset name here) must NOT become emphasis.
+        var idOnly = Markdown.ParseInline("coreassets_assets_actors and sealingTime");
+        Assert(idOnly.All(i => i is not Markdown.ItalicInline), "underscores inside words are not italics",
+            Flatten(idOnly));
+
+        // The WPF conversion is UI-affine (DispatcherObject), so exercise it on a throwaway
+        // STA thread - never shown - to prove it builds the expected document and does not
+        // throw. That is the code path the What's-new dialog hits in the real app.
+        var renderError = "";
+        int docBlocks = -1;
+        var worker = new System.Threading.Thread(() =>
+        {
+            try
+            {
+                var doc = MarkdownRenderer.Render(md);
+                docBlocks = doc.Blocks.Count;
+            }
+            catch (System.Exception ex) { renderError = ex.GetType().Name + ": " + ex.Message; }
+        });
+        worker.SetApartmentState(System.Threading.ApartmentState.STA);
+        worker.Start();
+        worker.Join();
+        Assert(renderError == "", "markdown renders to a FlowDocument without throwing", renderError);
+        Assert(docBlocks == 7, "FlowDocument has one block per parsed block", docBlocks.ToString());
+    }
+
+    private static string Flatten(System.Collections.Generic.IEnumerable<Markdown.Inline> nodes)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var n in nodes)
+            switch (n)
+            {
+                case Markdown.TextInline t: sb.Append(t.Text); break;
+                case Markdown.CodeInline c: sb.Append(c.Text); break;
+                case Markdown.BoldInline b: sb.Append(Flatten(b.Children)); break;
+                case Markdown.ItalicInline i: sb.Append(Flatten(i.Children)); break;
+                case Markdown.StrikeInline s: sb.Append(Flatten(s.Children)); break;
+                case Markdown.LinkInline l: sb.Append(Flatten(l.Children)); break;
+            }
+        return sb.ToString();
+    }
+
+    private static string DescribeList(Markdown.Block b)
+        => b is Markdown.ListBlock lb ? $"{(lb.Ordered ? "ordered" : "bullet")}({lb.Items.Count})" : b?.GetType().Name ?? "null";
 
     private static async System.Threading.Tasks.Task ProcessRunnerCheck()
     {

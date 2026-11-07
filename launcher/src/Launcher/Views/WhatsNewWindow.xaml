@@ -17,14 +17,15 @@
                    Text="Thanks for updating. Here is what is new in this release." />
 
         <Border Grid.Row="2" Style="{StaticResource Card}" Padding="14">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                <!-- The release body is GitHub-flavoured markdown; shown verbatim as
-                     selectable plain text so no renderer dependency is needed. -->
-                <TextBox Text="{Binding Body, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"
-                         BorderThickness="0" Background="Transparent"
-                         Foreground="{DynamicResource TextPrimaryBrush}"
-                         FontFamily="{DynamicResource AppFont}" FontSize="13" />
-            </ScrollViewer>
+            <!-- The release body is GitHub-flavoured markdown, rendered to a themed
+                 FlowDocument by MarkdownRenderer (no NuGet dependency). Selectable so the
+                 user can copy from it; links open in the default browser. -->
+            <FlowDocumentScrollViewer x:Name="Body"
+                                      VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled"
+                                      IsSelectionEnabled="True"
+                                      Background="Transparent"
+                                      Foreground="{DynamicResource TextPrimaryBrush}" />
         </Border>
 
         <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
