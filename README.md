@@ -133,6 +133,22 @@ content-mods/<name>/
 | Actually change gameplay content (bigger bag, more leaves, faster seal) | Install `safe-base/`, then `content-mods/bag-capacity/apply.ps1` (needs Python 3.12 + UnityPy). More mods in [`content-mods/`](content-mods/README.md) |
 | Undo everything and go back to vanilla | `safe-base/uninstall-all.ps1` — reverts every registered content mod, restores your original save, removes the firewall rule LAST. With no mods applied it's equivalent to `safe-base/uninstall.ps1`. |
 
+## Publish your own mod repo
+
+Since **2a** the launcher can install content mods straight from any GitHub repo that
+follows our [mod source spec](launcher/docs/MOD_SOURCE_SPEC.md) — you don't have to wait
+for us to bundle your work. Publish a repo in that layout, and users add it under
+**Settings → Mod sources**; the launcher then lists, installs, updates and self-heals your
+mods exactly like the built-ins (fetched into a separate `remote-mods/` folder, never
+touching the shipped ones). Because installing runs your `apply.ps1` / `.py`, users see a
+source + pinned-commit trust prompt before anything executes.
+
+The fastest start is to fork the ready-made
+[`launcher/docs/sample-source-repo/`](launcher/docs/sample-source-repo/) and follow the
+walkthrough in **[`launcher/docs/PUBLISH_YOUR_MODS.md`](launcher/docs/PUBLISH_YOUR_MODS.md)**
+(patcher shape, reusing the safe-base SDK, `mod.json` fields, versioning, and what not to
+ship). Optional: open a PR against that doc to ask for a featured listing.
+
 ## Why the split exists
 
 Blocking the network alone is not enough. Users uninstall mods, forget the

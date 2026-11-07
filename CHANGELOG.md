@@ -3,7 +3,10 @@
 Notable changes across this monorepo. Each sub-project also has its own
 release notes inside its README.
 
-## Unreleased
+## 1.1.0 (2026-11-07)
+Second release: the whole safe-base framework, the launcher, four content mods and
+GitHub-sourced mod installation. (v1.0.0 shipped only the `overlay/` example; the
+`Unreleased` work below was never given a version until now.)
 - Restructured into a monorepo: `overlay/`, `safe-base/`, `content-mods/`.
 - `safe-base/` design agreed (offline framework: verified firewall block,
   Steam proxy, save isolation, precondition trip-wire, PS SDK). Implementation
@@ -418,6 +421,42 @@ release notes inside its README.
   references (an update can leave both old and new bundles on disk). The old
   `patch_catalog.py` is deleted. Full apply→revert e2e passed on the updated
   install; game left pristine (registry empty, catalog hash matches backup).
+- **`launcher/` 2a — install mods from GitHub.** The launcher can now pull content
+  mods straight from any repo that follows the mod-source spec
+  (`launcher/docs/MOD_SOURCE_SPEC.md`), so third parties ship mods without waiting to
+  be bundled. `Services/GitHubApi.cs` fetches via the **GitHub REST API** (contents +
+  raw — no local-git dependency; unauth rate-limit handled, not blocking), mods are
+  staged in a separate `remote-mods/` dir that discovery scans *alongside* the built-in
+  `content-mods/` (the shipped folder is never edited), and `mod.json` gained optional
+  `sourceRepo` / `version` / `gameVersion` / `launcherVersion` fields for provenance +
+  compat. UI: **Settings → Mod sources** (add/remove a repo, ours pinned default) and a
+  **Browse online** tab on the Mods page (list → install → update → uninstall);
+  installing runs scripts from an untrusted repo, so a `TrustInstallWindow` shows the
+  source + pinned commit sha and requires an explicit opt-in before any `apply.ps1` /
+  `.py` executes. Self-heal re-downloads a mod whose pinned commit sha changed; a
+  "Reset to defaults" action restores a mod's config. Follow-up fixes: the Browse Install
+  button now enables once a mod is selected. 141+ headless checks pass (source registry,
+  manifest provenance/compat parse, staging discovery, no real network in the suite).
+- **`launcher/` 2b — smaller items + UX tweaks.** Four shipped features: (a) a single
+  version source of truth — `Services/AppInfo.cs` reads the assembly version (from the
+  csproj `<Version>`) so the self-update check and the UI never hardcode a number;
+  (b) **self-update** — `Services/UpdateChecker.cs` compares the local version against
+  the latest GitHub release tag (pure `IsNewer`, semver-aware, tolerates a `v` prefix /
+  garbage / empty tags) and surfaces a chip + banner when a newer build exists;
+  (c) **What's new** — `Views/WhatsNewWindow` shows the latest release body after an
+  update; (d) **diagnostics** — a zip of launcher logs/state (excluding game files) for
+  bug reports. Plus **mod conflict detection**: mods declare the bundles they touch in a
+  `patches[]` field, and the launcher flags two enabled mods writing the same target so
+  the user sees the clash before Apply.
+- **`launcher/` What's-new markdown.** The dialog previously dumped the GitHub release
+  body as raw text (visible `#`/`*`/`` ` `` noise). It now renders real markdown with
+  **zero new dependencies**: `Services/Markdown.cs` is a pure, headless-testable parser
+  (headings, bold/italic/strike, inline + fenced code, blockquotes, ordered/bullet lists,
+  rules, links) producing an intermediate model, and `Services/MarkdownRenderer.cs` builds
+  a WPF `FlowDocument` from it, themed entirely through existing `DynamicResource` keys
+  (no new tokens, so Light↔Dark parity holds). Underscores inside identifiers are left
+  unstyled on purpose, links open externally, and a `FlowDocumentScrollViewer` replaced the
+  read-only `TextBox`.
 
 ## 1.0.0
 Initial release: the `overlay/` example.
