@@ -1,0 +1,20 @@
+{
+  "id": "blower-suction-all-maps",
+  "name": "Leaf Blower Suction, All Maps",
+  "version": "1.0.0",
+  "author": "the loader's own repo",
+  "description": "Makes the leaf blower's SUCTION mode available by default on every map except Sakura, where it stays behind its normal purchase. Built on the loader's method-detour capability: it overrides LeafBlowerBehaviour.get_CanToggleMode with a per-map decision computed off the game thread. Safe to delete; the loader hosts without it.",
+  "order": 20,
+  "dll": "blower-suction-all-maps.dll",
+  "gameBuild": "26564381",
+
+  "mode": "except-sakura",
+
+  "_modeNote": "except-sakura = the requested behaviour: suction free on Hometown/Castle, still bought in Sakura. Needs the map signal below pinned (see MODLOG R9). Until it is pinned it stays vanilla. all-maps = suction on every map including Sakura; needs no map reverse-engineering and works today.",
+
+  "_mapSignalNote": "The current map is read via MainContext.get_ActiveScene -> its get_name (both dispatchable on this build). The live probe confirmed get_name returns the map name exactly: Sakura / Castle / Hometown (and Menu plus transient menu objects at the title). sakuraScene is now pinned to Sakura, so except-sakura is LIVE: suction forced on in Castle/Hometown, still bought in Sakura.",
+  "mapGetterType": "Eternity.Application.MainContext",
+  "mapGetterMethod": "get_ActiveScene",
+  "mapGetterStatic": true,
+  "sakuraScene": "Sakura"
+}
