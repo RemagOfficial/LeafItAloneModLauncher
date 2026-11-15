@@ -313,16 +313,25 @@ function Restore-ModFiles {
         the registry entry. For each recorded file:
           * originalExisted + current target matches originalSha -> already
             reverted, skip.
-          * originalExisted + current differs -> PARK the current (modded) file
-            under the mod's backup folder, then move the pristine backup into
-            place.
+          * originalExisted + current matches appliedSha -> the mod's own file
+            is still in place: PARK it under the mod's backup folder, then move
+            the pristine backup in.
+          * originalExisted + current matches NEITHER -> something other than
+            this mod changed it. That is what a GAME UPDATE looks like: Steam
+            replaced the file with the new build's version. Restoring the
+            pre-update backup here would DOWNGRADE the game (e.g. an old
+            catalog.bin against new bundles -> Addressables cannot resolve).
+            Refuse that file and report it; -Force overrides.
           * originalExisted + target absent (user deleted it) -> just restore
             the backup.
           * NOT originalExisted (the mod ADDED this file) -> if present, park
             it out of the game folder; the game goes back to not having it.
         Returns a report object. Never deletes anything.
     #>
-    param([Parameter(Mandatory)][string]$Name)
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [switch]$Force
+    )
     $mods = @(Get-SafeBaseModRegistry)
     $entry = $mods | Where-Object { $_.name -eq $Name } | Select-Object -First 1
     if (-not $entry) { throw "Restore-ModFiles: '$Name' is not registered." }
@@ -333,16 +342,26 @@ function Restore-ModFiles {
     $restored = New-Object System.Collections.Generic.List[string]
     $parked   = New-Object System.Collections.Generic.List[string]
     $skipped  = New-Object System.Collections.Generic.List[string]
+    $conflict = New-Object System.Collections.Generic.List[string]
 
     foreach ($f in @($entry.files)) {
         $target = "$($f.targetPath)"
         if ($f.originalExists) {
             if (Test-Path -LiteralPath $target) {
                 $cur = (Get-FileHash -LiteralPath $target -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash
-                if ($cur -and $f.originalSha256 -and $cur.ToUpperInvariant() -eq $f.originalSha256) {
+                if ($cur) { $cur = $cur.ToUpperInvariant() }
+                if ($cur -and $f.originalSha256 -and $cur -eq $f.originalSha256) {
                     $skipped.Add($target); continue
                 }
-                # Modded (or hand-edited) file where the original belongs: park it.
+                # Not the original. Only a file this mod actually wrote may be reverted;
+                # anything else was changed underneath us (game update / another tool).
+                $isOurs = $cur -and $f.appliedSha256 -and $cur -eq "$($f.appliedSha256)".ToUpperInvariant()
+                if (-not $isOurs -and -not $Force) {
+                    $conflict.Add($target)
+                    Write-Warning ("Restore-ModFiles: '{0}' was changed by something other than this mod (game update?) - NOT restoring the pre-update backup. Refusing: {1}" -f $Name, $target)
+                    continue
+                }
+                # Modded file where the original belongs: park it.
                 $pk = Join-Path $modDir ("{0}.modified-{1}" -f [System.IO.Path]::GetFileName($target), $stamp)
                 Move-Item -LiteralPath $target -Destination $pk -Force
                 $parked.Add($pk)
@@ -368,11 +387,16 @@ function Restore-ModFiles {
         }
     }
 
+    if ($conflict.Count -gt 0) {
+        Write-Warning ("Restore-ModFiles: '{0}': {1} file(s) were replaced by the game itself and were left alone. The backups for those are now STALE - re-apply the mod after the update so it snapshots the new build." -f $Name, $conflict.Count)
+    }
+
     [pscustomobject]@{
         name            = $Name
         filesRestored   = @($restored)
         filesParked     = @($parked)
         filesUnchanged  = @($skipped)
+        filesConflicted = @($conflict)
     }
 }
 
@@ -382,9 +406,16 @@ function Revert-Mod {
         a mod's own revert.ps1 should call, and what uninstall-all.ps1 runs for
         every registered mod. Keeps the (now-empty-ish) backup folder so parked
         files remain inspectable. Returns the restore report.
+
+        -Force also restores files that something other than the mod replaced
+        (i.e. a game update). Only use it when you know the backup is still the
+        right content for the installed build - otherwise it downgrades the game.
     #>
-    param([Parameter(Mandatory)][string]$Name)
-    $report = Restore-ModFiles -Name $Name
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [switch]$Force
+    )
+    $report = Restore-ModFiles -Name $Name -Force:$Force
     [void](Unregister-Mod -Name $Name)
     return $report
 }
