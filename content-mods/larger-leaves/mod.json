@@ -1,0 +1,48 @@
+{
+  "$comment": "Launcher manifest for the larger-leaves mod. This file only DESCRIBES the mod; the value store stays the live %LOCALAPPDATA%\\LeafItAloneSafe\\larger-leaves.json that apply.ps1 seeds and reads, and apply/revert still run the validated scripts. Adding a mod means writing a manifest like this, never new launcher UI code.",
+
+  "id": "larger-leaves",
+  "name": "Larger leaves",
+  "version": "1.0.0",
+  "description": "Makes every leaf you see physically bigger. Unlike the other leaf mods this one is not a data change: the drawn size is baked into the leaf render shader, so it rewrites one shader constant (and repairs the shader's integrity hash) to scale every leaf by a multiplier.",
+  "homepage": "",
+  "order": 30,
+
+  "configPath": "%LOCALAPPDATA%\\LeafItAloneSafe\\larger-leaves.json",
+
+  "config": {
+    "fields": [
+      {
+        "key": "multiplier",
+        "label": "Leaf size multiplier",
+        "type": "float",
+        "min": 0.25,
+        "max": 4,
+        "step": 0.05,
+        "default": 2.0,
+        "help": "Scales the drawn size of every leaf. 1.0 = vanilla, 2.0 = twice as big. Very large values overlap and clip."
+      }
+    ]
+  },
+
+  "apply": {
+    "script": "apply.ps1",
+    "args": ["-Yes"]
+  },
+
+  "revert": {
+    "script": "revert.ps1",
+    "args": ["-Yes"]
+  },
+
+  "requires": {
+    "safeBase": true,
+    "gameNotRunning": true,
+    "python": true
+  },
+
+  "$patchesComment": "2b conflict detection: the exact engine value this mod rewrites (from patch_leaf_size.py). It edits one baked float immediate (the leaf radius 0.141420) inside the leaf render shader's DXBC vertex programs in the shaders_assets_all bundle, and recomputes each container's integrity digest. It touches no data bundle, so it never collides with bag-capacity / more-leaves / faster-bag-tying.",
+  "patches": [
+    { "bundle": "shaders_assets_all", "asset": "Unlit/LeafShader", "field": "vertex-size immediate 0.141420" }
+  ]
+}

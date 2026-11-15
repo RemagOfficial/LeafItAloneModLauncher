@@ -1,0 +1,6 @@
+{
+  "_comment": "larger-leaves config. Edit this file, then run apply.ps1 (it reverts to vanilla and re-patches automatically). apply.ps1 CLI flags override what's here.",
+
+  "_notes": "multiplier scales the leaf RENDER size baked into the leaf shader (vanilla radius 0.141420 world units). 1.0 = vanilla, 2.0 = twice as big. Values below ~0.5 or above ~4 are legal but start to look wrong or clip.",
+  "multiplier": 2.0
+}
