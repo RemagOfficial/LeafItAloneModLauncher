@@ -1,0 +1,9 @@
+{
+  "version": "1.2.0",
+  "files": [
+    "version.dll",
+    "LiaLoader.dll",
+    "LiaLoader.Api.dll"
+  ],
+  "minLauncherVersion": "1.2.0"
+}
