@@ -7,7 +7,7 @@ have to run the per-mod PowerShell scripts or edit JSON by hand.
 engines as hidden subprocesses — `safe-base/install.ps1`, `uninstall.ps1`,
 `uninstall-all.ps1`, `status.ps1`, and each mod's `apply.ps1`/`revert.ps1` (which
 run the UnityPy patchers). No firewall / Steam-proxy / save-isolation / patch logic
-is duplicated in C#, so the safety guarantees built in milestones M1–M7 hold
+is duplicated in C#, so the safety guarantees built into those engines hold
 unchanged.
 
 > This is the primary path going forward. The manual scripts still work and are
@@ -25,21 +25,22 @@ the file page.
 
 ## Status
 
-Milestones **L1–L9** are complete, including **L8** (distribution polish — the
-first-run walkthrough, troubleshooting map, release-zip layout and credits below).
+The launcher is complete and shipping. The capability groups below cover the shell and
+discovery, the schema-driven editor, apply/revert orchestration, the loader + safe-base
+lifecycle, code mods, runtime detection, the visual overhaul and distribution polish.
 
-> **L9** is the visual overhaul + functional settings: a live Light/Dark theme with an
+> The visual layer is a hand-built WPF design system: a live Light/Dark theme with an
 > accent picker, a left nav rail (Dashboard / Mods / Settings), and a Settings page that
 > actually works — theme/accent applied live and persisted, plus content-root and
 > game-exe path overrides. All hand-built WPF styles (no theme packages, so the offline
-> build constraint holds). See the "Look & settings (L9)" section below.
+> build constraint holds). See the "Look & settings" section below.
 
-**L1** — WPF app that builds and runs; the subprocess `ProcessRunner` (PowerShell
+**Shell + subprocess engine** — WPF app that builds and runs; the subprocess `ProcessRunner` (PowerShell
 `-File`, `ArgumentList` quoting, streamed Output log, timeout + exit code); mod
 discovery from `content-mods/<id>/mod.json`; the manifest schema; `bag-capacity`
 refactored to ship one; a read-only mod list.
 
-**L2** — the **schema-driven editor**: selecting a mod renders one control per
+**Schema-driven editor** — selecting a mod renders one control per
 manifest field by declared `type` (slider+box for int/float, checkbox for bool,
 combo for enum, text box for text), with `when`-gated visibility (e.g. the bag
 sizes only show in `mode: sizes`). For numeric fields the **slider and the text
@@ -52,7 +53,7 @@ Edits write the live
 not mention** (`_comment`, `_applyHelper`, …). The enable toggle and applied-config
 SHA persist to `launcher/state.json`.
 
-**L3** — **apply/revert orchestration**: the Mods detail pane has **Apply / Revert**
+**Apply/revert orchestration** — the Mods detail pane has **Apply / Revert**
 buttons that drive the real `apply.ps1` / `revert.ps1` through `ApplyOrchestrator` +
 `ProcessRunner` (never reimplementing patching). `-Python` is resolved by
 `PythonLocator` (bundled → `LEAF_PYTHON` → system) and passed to apply only. Cheap
@@ -61,28 +62,38 @@ message while the scripts stay authoritative. On a clean exit the applied SHA +
 version are recorded and the badge clears. The Output log **auto-scrolls** to new
 lines (following only when you're already at the bottom).
 
-**L4** — **Apply & Launch**: the Dashboard action reconciles every mod against its
+**Apply & Launch** — the Dashboard action reconciles every mod against its
 enable toggle in manifest `order` (apply what should be live, revert what was switched
 off, skip what's in sync), then starts the game from the path safe-base recorded in
 `manifest.json` (`GameLauncher`). Any blocked/failed mod stops the sequence **before**
 launch, so the game never boots half-modded.
 
-**L5** — **safe-base lifecycle + first-run landing**: the Dashboard (now the default
-tab) shows the framework's state from `manifest.json` and drives its install/teardown
-through `SafeBaseService` → the real `install.ps1` / `uninstall-all.ps1` / `status.ps1`
+**Safe-base lifecycle + first-run landing** — the Dashboard (the default tab) shows the
+framework's state from `manifest.json` and drives its install/teardown through
+`SafeBaseService` → the real `install.ps1` / `uninstall-all.ps1` / `status.ps1`
 (subprocess only; self-elevation is handled by the scripts, whose exit code we read).
-**Install safe-base** appears when it is missing (first-run guidance), **Uninstall all**
-when present, and **Run full status** streams the full report and surfaces its
+**Install loader + safe-base** runs the safe-base install (with its banner-overlay step
+skipped) and then fetches the mod loader from a source repo's `loader/` folder in one
+action, so the loader's `version.dll` provides both the offline banner and code-mod
+hosting; the button stays up until both are present. **Uninstall all** appears when the
+base is present, and **Run full status** streams the full report and surfaces its
 `VERDICT:` line. Uninstall also clears every mod's applied marker so the badges stay
 honest.
 
-**L6** — **overlay slimdown.** The in-game F8 bag editor is retired now that the
+**Code mods + mod kinds** — a mod is a *code* mod when its `mod.json` declares a `dll`
+(the loader hosts it from the game's `Mods\<id>\` folder, taking effect on the next
+launch) and a *data* mod when it carries `apply`/`revert` scripts instead. Enabling a
+code mod copies its files into the game's `Mods\` tree and disabling removes them; the
+Installed list badges every data mod `data-based` and every code mod `code` so the two
+kinds read clearly, in both the Installed list and Browse.
+
+**Overlay slimdown** — the in-game F8 bag editor is retired now that the
 launcher owns bag config: `leaf_overlay.cpp` keeps only the banner + one-shot
 preflight, the `[bageditor]` ini keys, `apply-on-exit.ps1` and the `_applyHelper`
 injection are gone, and `version.dll` is rebuilt. (Lives in `overlay/` +
 `safe-base/` + `content-mods/`, not the C# app.)
 
-**L7** — **mod-runtime detection + the second data-only mod.** Instead of bundling a
+**Mod-runtime detection + the second data-only mod** — instead of bundling a
 private Python (no network at build time, and the launcher runs via `dotnet`), the
 launcher *detects* the engine runtime: `Services/PythonHealth.cs` probes the resolved
 interpreter once (version + whether `UnityPy` imports) with a pure, unit-tested
@@ -90,11 +101,11 @@ classifier, the Dashboard shows a **"Mod engine runtime"** status panel, and whe
 usable Python 3.12 + UnityPy is found it opens a guided **setup popup** — the pinned
 download link, the exact `pip install UnityPy` command and a **Re-check** that re-probes
 without a restart. `ApplyOrchestrator` gates a Python-requiring apply on that probe.
-Part B adds **`more-leaves`** — a second UnityPy mod shipped purely as a `mod.json` +
+The drop-in **`more-leaves`** mod is a second UnityPy mod shipped purely as a `mod.json` +
 scripts (no launcher code) that densifies each area's `leavesCount`, proving discovery is
 fully manifest-driven. 100 headless checks pass.
 
-**L9** — **visual overhaul + functional settings.** The old per-mod scripts and stub
+**Visual overhaul + functional settings** — the old per-mod scripts and stub
 Settings tab are gone from the UX: the window is now a **left nav rail** (brand mark,
 Dashboard / Mods / Settings, busy + pending indicators) over a header band, a page
 region, a collapsible dark **console** with a Clear affordance, and a slim status bar.
@@ -115,11 +126,11 @@ and a **game-exe override** feed the existing launch seam (`GameLauncher.Launch(
 — override wins only if the file exists, else the safe-base manifest path). Path pickers
 use the in-box .NET 8 `OpenFolderDialog` / `OpenFileDialog` and are raised from the VM as
 events, opened in the code-behind (dialogs stay out of the VM, as with the Python popup).
-Five L9 headless checks cover the `AppConfig` round-trip, override-aware discovery,
+Five headless checks cover the `AppConfig` round-trip, override-aware discovery,
 game-exe override resolution, the accent lighten/darken/on-accent math and Light↔Dark
 token parity; the full suite passes.
 
-**L8** — **distribution polish.** The launcher is promoted to the primary path in the
+**Distribution polish** — the launcher is promoted to the primary path in the
 top-level README, and this file gains a first-run walkthrough, a troubleshooting map
 (where `state.json` / `settings.json` / `manifest.json` and the engine + overlay logs
 live), a concrete **self-contained release-zip layout** and honest credits/licensing.
@@ -144,7 +155,7 @@ launcher/
     Services/                  RepoLocator, ProcessRunner, ModDiscovery, EnvPaths,
                                GameLauncher, SafeBaseService, PythonHealth, AppConfig
     ViewModels/                MainViewModel + ObservableObject + RelayCommand + Section
-  tests/HeadlessChecks/        a console harness (no game, no UI) for L1–L9 checks
+  tests/HeadlessChecks/        a console harness (no game, no UI) for the launcher's checks
 ```
 
 ## Build & run (dev)
@@ -174,7 +185,7 @@ Asserts discovery, the manifest round-trip, `%LOCALAPPDATA%` path expansion and 
 subprocess runner (exit code + streamed output). Exits non-zero on any failure, so
 it can gate the build.
 
-## Look & settings (L9)
+## Look & settings
 
 The UI is a **left nav rail** with three pages — **Dashboard** (Play first, then safe-base,
 mod engine runtime, tools), **Mods** (the schema-driven editor list + detail) and
@@ -268,7 +279,7 @@ dotnet publish src/Launcher/Launcher.csproj -c Release -r win-x64 --self-contain
 > without those packs (or network) can only do the framework-dependent publish
 > (`dotnet publish -c Release`), which is what CI here validates. The published
 > `publish/` folder then needs the `content-mods/` and engine scripts beside it (see
-> the packaging milestone, L7).
+> the release-zip layout below).
 
 **Release-zip layout** (what goes beside the self-contained exe so `RepoLocator` finds a
 published root — a `content-mods/` tree next to a `tools/` engine folder):

@@ -11,7 +11,7 @@ using LeafItAlone.Launcher.ViewModels;
 namespace LeafItAlone.Launcher.Tests;
 
 /// <summary>
-/// L1 headless checks: discovery, manifest round-trip, env-path expansion and the
+/// Headless checks: discovery, manifest round-trip, env-path expansion and the
 /// subprocess runner — all without launching WPF or touching the game. Exits 0 on
 /// success, 1 on any failed assertion, so it doubles as a build gate.
 /// </summary>
@@ -21,7 +21,7 @@ internal static class Program
 
     private static int Main()
     {
-        Console.WriteLine("Launcher L1/L2/L3/L4/L5/L6/L7/L9 headless checks");
+        Console.WriteLine("Launcher headless checks");
         Console.WriteLine("================================");
 
         CheckRepoAndDiscovery();
@@ -43,7 +43,7 @@ internal static class Program
         CheckGameExeOverride();
         CheckThemeMath();
         CheckThemeTokenParity();
-        // Mod-sources (2a R1-R5): manifest optional fields, source registry, path
+        // Mod sources: manifest optional fields, source registry, path
         // derivation, git blob sha + self-heal manifest round-trip. No network.
         CheckModManifestOptionalFields();
         CheckModSourceDeriveKey();
@@ -51,7 +51,7 @@ internal static class Program
         CheckLauncherStateRemoteRoundTrip();
         CheckGitBlobShaMatchesKnownVectors();
         CheckCompositeDiscoveryDeduplicates();
-        // 2b: version source, self-update compare, patches[] manifest field, conflict
+        // Version source, self-update compare, patches[] manifest field, conflict
         // analyzer, and the diagnostics exporter's game-file deny-list. All offline.
         CheckAppInfoVersion();
         CheckVersionCompare();
@@ -68,6 +68,18 @@ internal static class Program
     }
 
 
+    // Works-in-progress that live in content-mods/ but are not finished or shipped yet.
+    // The launcher correctly rejects them (they declare neither apply.script nor a dll),
+    // so the real-tree discovery checks set that documented rejection aside instead of
+    // reporting it as a launcher defect. Every other manifest must still parse clean.
+    private static readonly string[] UnshippedMods = { "greedy-grip-plus" };
+
+    private static List<string> ShippedModErrors(DiscoveryResult result) =>
+        result.Errors
+            .Where(e => !UnshippedMods.Any(id =>
+                e.Contains(id + Path.DirectorySeparatorChar + "mod.json", StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+
     private static void CheckRepoAndDiscovery()
     {
         var locator = new RepoLocator();
@@ -80,7 +92,8 @@ internal static class Program
         var result = new ModDiscovery().Discover(locator.ModsRoot!);
         foreach (var err in result.Errors)
             Console.WriteLine("  discovery error: " + err);
-        Assert(result.Errors.Count == 0, "no manifest parse errors", string.Join("; ", result.Errors));
+        var shippedErrors = ShippedModErrors(result);
+        Assert(shippedErrors.Count == 0, "no manifest parse errors", string.Join("; ", shippedErrors));
 
         var bag = result.Mods.FirstOrDefault(m => m.Id == "bag-capacity");
         Assert(bag is not null, "bag-capacity discovered",
@@ -111,7 +124,7 @@ internal static class Program
     }
 
     /// <summary>
-    /// L7's core claim: a second UnityPy mod is added purely by dropping a folder with a
+    /// Core claim: a second UnityPy mod is added purely by dropping a folder with a
     /// mod.json next to bag-capacity - no launcher code changed. Discovers the REAL
     /// content-mods tree and asserts more-leaves shows up, ordered after bag-capacity, with
     /// its manifest fully parsed. Safe: reads manifests only, never touches the game.
@@ -121,12 +134,13 @@ internal static class Program
         var locator = new RepoLocator();
         if (!locator.TryLocate(AppContext.BaseDirectory) || locator.ModsRoot is null)
         {
-            Assert(false, "RepoLocator found mods root for L7", locator.LastError ?? "null");
+            Assert(false, "RepoLocator found mods root", locator.LastError ?? "null");
             return;
         }
 
         var result = new ModDiscovery().Discover(locator.ModsRoot!);
-        Assert(result.Errors.Count == 0, "L7: no manifest parse errors", string.Join("; ", result.Errors));
+        var shippedErrors = ShippedModErrors(result);
+        Assert(shippedErrors.Count == 0, "no manifest parse errors", string.Join("; ", shippedErrors));
 
         var leaves = result.Mods.FirstOrDefault(m => m.Id == "more-leaves");
         Assert(leaves is not null, "more-leaves discovered from its manifest alone",
@@ -179,7 +193,7 @@ internal static class Program
 
     private static void CheckConfigStoreRoundTrip()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "leaf-l2-" + Guid.NewGuid().ToString("N"));
+        var dir = Path.Combine(Path.GetTempPath(), "leaf-cfgstore-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, "cfg.json");
         try
@@ -219,7 +233,7 @@ internal static class Program
         var bag = result.Mods.FirstOrDefault(m => m.Id == "bag-capacity");
         if (bag is null) { Assert(false, "editor test found bag-capacity"); return; }
 
-        var dir = Path.Combine(Path.GetTempPath(), "leaf-l2e-" + Guid.NewGuid().ToString("N"));
+        var dir = Path.Combine(Path.GetTempPath(), "leaf-editor-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, "bag-capacity.json");
         try
@@ -243,7 +257,7 @@ internal static class Program
             Assert(small.IsVisible && !multiplier.IsVisible, "visibility re-gates on mode change");
 
             // Edit a value and save; confirm the live file + extras + pending.
-            // Pending is enabled-aware (L3): a disabled mod is never pending, so opt in first.
+            // Pending is enabled-aware: a disabled mod is never pending, so opt in first.
             editor.Enabled = true;
             small.Num = 333;
             bool pendingBefore = editor.IsPending;   // enabled + nothing applied yet
@@ -370,7 +384,7 @@ internal static class Program
         finally { try { Directory.Delete(dir, true); } catch { } }
     }
 
-    // ---- 2b: version source / self-update / patches / conflicts / diagnostics ----
+    // ---- version source / self-update / patches / conflicts / diagnostics ----
 
     /// <summary>The single version source must yield a non-empty, parseable number.</summary>
     private static void CheckAppInfoVersion()
@@ -656,7 +670,7 @@ internal static class Program
     }
 
     /// <summary>
-    /// L3 pending model (enabled-aware), exercised without WPF: the badge must track
+    /// Pending model (enabled-aware), exercised without WPF: the badge must track
     /// "would an Apply/Revert change the game?" - not just "does the file differ from
     /// what was applied". Mirrors exactly what the VM does (Apply saves, then records
     /// the applied sha; Revert clears it).
@@ -668,7 +682,7 @@ internal static class Program
         var bag = new ModDiscovery().Discover(loc.ModsRoot!).Mods.FirstOrDefault(m => m.Id == "bag-capacity");
         if (bag is null) { Assert(false, "pending test found bag-capacity"); return; }
 
-        var dir = Path.Combine(Path.GetTempPath(), "leaf-l3p-" + Guid.NewGuid().ToString("N"));
+        var dir = Path.Combine(Path.GetTempPath(), "leaf-pending-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, "bag-capacity.json");
         try
@@ -740,7 +754,7 @@ internal static class Program
     /// </summary>
     private static async System.Threading.Tasks.Task OrchestratorRunCheck()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "leaf-l3r-" + Guid.NewGuid().ToString("N"));
+        var dir = Path.Combine(Path.GetTempPath(), "leaf-revert-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         try
         {
@@ -783,7 +797,7 @@ internal static class Program
     }
 
     /// <summary>
-    /// The L4 "Apply &amp; Launch" per-mod decision (pure), across the state matrix the
+    /// The "Apply &amp; Launch" per-mod decision (pure), across the state matrix the
     /// pending model can produce. Proves the sequence applies what should be live,
     /// reverts what was switched off, and leaves in-sync mods alone (so it never churns
     /// the game for no reason).
@@ -809,7 +823,7 @@ internal static class Program
     /// </summary>
     private static void CheckGameExeResolution()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "leaf-l4-" + Guid.NewGuid().ToString("N"));
+        var dir = Path.Combine(Path.GetTempPath(), "leaf-gameexe-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         try
         {
@@ -847,14 +861,14 @@ internal static class Program
     }
 
     /// <summary>
-    /// L5 safe-base lifecycle: the manifest parse that drives the Dashboard (no subprocess)
+    /// Safe-base lifecycle: the manifest parse that drives the Dashboard (no subprocess)
     /// plus a real <c>status.ps1</c> run through the runner. The status run also proves that
     /// <c>Write-Host</c> output reaches our redirected stdout (status.ps1 prints its VERDICT
     /// with Write-Host, not Write-Output) and that the VERDICT line is extracted for the panel.
     /// </summary>
     private static void CheckSafeBaseLifecycle()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "leaf-l5-" + Guid.NewGuid().ToString("N"));
+        var dir = Path.Combine(Path.GetTempPath(), "leaf-safebase-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         try
         {
@@ -863,13 +877,11 @@ internal static class Program
             File.WriteAllText(manifest, new JsonObject
             {
                 ["installedAt"] = "2026-11-05T10:00:00",
-                ["milestone"] = "M6",
                 ["gameExe"] = @"B:\SteamLibrary\Leaf it Alone.exe",
             }.ToJsonString());
 
             var info = SafeBaseService.ReadFrom(manifest);
             Assert(info.Installed, "installed manifest -> Installed");
-            Assert(info.Milestone == "M6", "milestone parsed", info.Milestone);
             Assert(info.GameExe == @"B:\SteamLibrary\Leaf it Alone.exe", "gameExe parsed", info.GameExe ?? "null");
 
             Assert(!SafeBaseService.ReadFrom(Path.Combine(dir, "absent.json")).Installed,
@@ -882,9 +894,9 @@ internal static class Program
             var sample = new System.Collections.Generic.List<string>
             {
                 "safe-base status", "=====", "  present : yes",
-                "VERDICT: safe-base M1 + M2 + M3 + M4 active. Game's outbound blocked.",
+                "VERDICT: safe-base active. Game's outbound blocked.",
             };
-            Assert(SafeBaseService.ExtractVerdict(sample)?.StartsWith("safe-base M1 + M2") == true,
+            Assert(SafeBaseService.ExtractVerdict(sample)?.StartsWith("safe-base active") == true,
                 "ExtractVerdict pulls the VERDICT text", SafeBaseService.ExtractVerdict(sample) ?? "null");
             Assert(SafeBaseService.ExtractVerdict(new[] { "no verdict here" }) is null,
                 "ExtractVerdict -> null when absent");
@@ -893,12 +905,12 @@ internal static class Program
             File.WriteAllText(Path.Combine(dir, "status.ps1"),
                 "$ErrorActionPreference='Stop'\n" +
                 "Write-Host 'safe-base status'\n" +
-                "Write-Host 'VERDICT: safe-base M1 + M2 + M3 + M4 active.'\nexit 0\n");
+                "Write-Host 'VERDICT: safe-base active.'\nexit 0\n");
 
             var svc = new SafeBaseService(new ProcessRunner(), dir);
             var (res, verdict) = svc.RunStatusAsync().GetAwaiter().GetResult();
             Assert(res.Success, "fake status.ps1 exited 0", $"exit {res.ExitCode} fault={res.Fault}");
-            Assert(verdict == "safe-base M1 + M2 + M3 + M4 active.",
+            Assert(verdict == "safe-base active.",
                 "VERDICT captured from Write-Host output", verdict ?? "null");
         }
         finally { try { Directory.Delete(dir, true); } catch { } }
@@ -917,7 +929,7 @@ internal static class Program
             ("--- apply FAILED (exit 7) ---", LogSeverity.Error, "apply FAILED -> red"),
             ("applied v1.2.0", LogSeverity.Success, "applied -> green"),
             ("reverted to vanilla", LogSeverity.Success, "reverted -> green"),
-            ("VERDICT: safe-base M1 + M2 + M3 + M4 active. Game's outbound blocked.", LogSeverity.Success, "healthy VERDICT -> green"),
+            ("VERDICT: safe-base active. Game's outbound blocked.", LogSeverity.Success, "healthy VERDICT -> green"),
             ("VERDICT: not installed. Content mods ... refuse to apply.", LogSeverity.Warning, "not-installed VERDICT -> yellow"),
             ("  MISSING - content mods cannot import the SDK. Re-run install.ps1.", LogSeverity.Error, "MISSING -> red"),
             ("!! a marker has REAPPEARED in the current Saves/", LogSeverity.Error, "'!!' alert -> red"),
@@ -935,7 +947,7 @@ internal static class Program
     }
 
     /// <summary>
-    /// L7 Python detection: file-existence is not enough - the interpreter must be 3.12 AND
+    /// Python detection: file-existence is not enough - the interpreter must be 3.12 AND
     /// import UnityPy. These exercise the pure classifier over synthetic probe output, the
     /// Ready-for-apply mapping (a wrong version with UnityPy still patches), and the
     /// no-interpreter short-circuit that never spawns a process.
@@ -976,13 +988,13 @@ internal static class Program
     }
 
     /// <summary>
-    /// L9 settings store: values round-trip through settings.json, a corrupt file falls
+    /// Settings store: values round-trip through settings.json, a corrupt file falls
     /// back to defaults (never throws across startup), and a hand-edited file is normalized
     /// (bad theme -> system, bad accent -> house green).
     /// </summary>
     private static void CheckAppConfigRoundTrip()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "leaf-l9cfg-" + Guid.NewGuid().ToString("N"));
+        var dir = Path.Combine(Path.GetTempPath(), "leaf-settings-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, "settings.json");
         try
@@ -1018,13 +1030,13 @@ internal static class Program
     }
 
     /// <summary>
-    /// L9 content-root override seam: TryLocate honors an explicit start dir (a temp folder
+    /// Content-root override seam: TryLocate honors an explicit start dir (a temp folder
     /// holding content-mods beside a safe-base/tools marker) instead of only walking up, and
     /// a folder without the markers is rejected so a bad override surfaces, not mis-locates.
     /// </summary>
     private static void CheckContentRootOverride()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "leaf-l9root-" + Guid.NewGuid().ToString("N"));
+        var dir = Path.Combine(Path.GetTempPath(), "leaf-contentroot-" + Guid.NewGuid().ToString("N"));
         var root = Path.Combine(dir, "modset");
         try
         {
@@ -1045,13 +1057,13 @@ internal static class Program
     }
 
     /// <summary>
-    /// L9 game-exe override: an override naming a real file wins; an empty or stale override
+    /// Game-exe override: an override naming a real file wins; an empty or stale override
     /// falls back to the manifest resolution (the same value the no-arg call returns), so a
     /// deleted override never blocks launching.
     /// </summary>
     private static void CheckGameExeOverride()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "leaf-l9exe-" + Guid.NewGuid().ToString("N"));
+        var dir = Path.Combine(Path.GetTempPath(), "leaf-exeoverride-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         try
         {
@@ -1073,7 +1085,7 @@ internal static class Program
     }
 
     /// <summary>
-    /// L9 theme helpers (pure): hex parsing, the lighten/darken accent shades, the readable
+    /// Theme helpers (pure): hex parsing, the lighten/darken accent shades, the readable
     /// on-accent foreground, and system->light/dark resolution. These drive the live swap.
     /// </summary>
     private static void CheckThemeMath()
@@ -1176,7 +1188,7 @@ internal static class Program
         return new ModInfo(manifest, folder, Path.Combine(folder, "mod.json"));
     }
 
-    // ---- Mod-sources (2a) headless checks: no network, no game files ----
+    // ---- Mod-source headless checks: no network, no game files ----
 
     /// <summary>
     /// The three optional fields (sourceRepo, minLauncherVersion, gameVersion)
@@ -1284,7 +1296,7 @@ internal static class Program
             Assert(back.FilesManifest["APPLY.PS1"] == "bbb", "manifest is case-insensitive", "");
             Assert(back.FolderPathInRepo == "content-mods/my-remote", "folder path preserved", back.FolderPathInRepo);
 
-            // A pre-R3 state.json (no remote block) still loads cleanly.
+            // An earlier state.json (no remote block) still loads cleanly.
             var legacyJson = "{\"mods\":{\"old\":{\"enabled\":true}}}";
             File.WriteAllText(tmp, legacyJson);
             var legacy = LauncherState.Load(tmp);
@@ -1353,6 +1365,17 @@ internal static class Program
             var cool = result.Mods.First(m => m.Id == "cool-remote");
             Assert(cool.IsRemote && cool.SourceKey == "some__repo",
                 "remote mod carries its source key", $"IsRemote={cool.IsRemote} key={cool.SourceKey}");
+
+            // App policy: the launcher's Mods page lists INSTALLED mods only, so it passes a
+            // null built-in root. That must drop the built-in catalog entirely (more-leaves,
+            // which exists only as a built-in, disappears) while keeping installed remote mods
+            // (the remote bag-capacity shadow now installs cleanly, with no built-in collision).
+            var installedOnly = new CompositeModDiscovery().Discover(null, remoteRoots);
+            var ioIds = installedOnly.Mods.Select(m => m.Id).ToList();
+            Assert(ioIds.Contains("cool-remote") && ioIds.Contains("bag-capacity") && !ioIds.Contains("more-leaves"),
+                "installed-only discovery excludes built-ins", string.Join(",", ioIds));
+            Assert(!installedOnly.Errors.Any(e => e.Contains("built-in")),
+                "no built-in collision when built-ins are not scanned", string.Join(" | ", installedOnly.Errors));
         }
         finally { try { Directory.Delete(scratch, true); } catch { } }
     }

@@ -6,7 +6,7 @@ using LeafItAlone.Launcher.Services;
 namespace LeafItAlone.Launcher.Views;
 
 /// <summary>
-/// Mod-sources (2a R5): modal shown before the first install from a non-trusted
+/// Mod sources: modal shown before the first install from a non-trusted
 /// source. Displays the repo URL, pinned commit SHA and the list of script files
 /// that will land on the user's disk (apply.ps1, revert.ps1, any *.py) so the
 /// user cannot say they were shown only a name. The Install button stays disabled

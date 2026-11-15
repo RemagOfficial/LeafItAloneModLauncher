@@ -11,8 +11,8 @@ namespace LeafItAlone.Launcher;
 /// Shell window. All state lives in <see cref="MainViewModel"/>; the code-behind only
 /// sets the DataContext (keeps the XAML binding targets honest) and owns the few
 /// UI-only concerns the VM stays clear of: opening the Python setup popup when the VM
-/// asks (L7), raising the folder/file pickers for the Settings path overrides (L9),
-/// and the mod-sources trust modal that gates first installs from a third-party repo (2a R5).
+/// asks, raising the folder/file pickers for the Settings path overrides,
+/// and the Mod sources trust modal that gates first installs from a third-party repo.
 /// The nav rail switches pages through the VM's <c>SelectSectionCommand</c>, so there is
 /// nothing here about navigation either.
 /// </summary>
@@ -32,7 +32,7 @@ public partial class MainWindow : Window
         vm.RequestTrustApproval = ShowTrustAsync;
         vm.RequestWhatsNew = ShowWhatsNew;
 
-        // 2b: restore the last window size (AppConfig already clamped it to the
+        // restore the last window size (AppConfig already clamped it to the
         // minimum / larger default). The XAML values are just the design-time hint.
         Width = vm.WindowWidth;
         Height = vm.WindowHeight;
@@ -62,7 +62,7 @@ public partial class MainWindow : Window
         return Task.FromResult(win.ShowDialog() == true);
     }
 
-    // 2b: the What's-new seam. Runs on the dispatcher (the VM raises it from a
+    // the What's-new seam. Runs on the dispatcher (the VM raises it from a
     // startup continuation with no ConfigureAwait(false)), so ShowDialog is safe.
     // Guarded so a duplicate raise never stacks a second window.
     private void ShowWhatsNew(string title, string body)
@@ -98,7 +98,7 @@ public partial class MainWindow : Window
         }
     }
 
-    // L9: the picker sets the VM override property, whose setter persists and acts
+    // the picker sets the VM override property, whose setter persists and acts
     // (re-scan for a content root, refresh the launch target for a game exe).
     private void BrowseContentRoot(MainViewModel vm)
     {

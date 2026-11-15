@@ -10,7 +10,7 @@ namespace LeafItAlone.Launcher;
 /// Application entry point. WPF generates <c>InitializeComponent</c> from App.xaml.
 /// On startup we load the saved <see cref="AppConfig"/> and apply its theme + accent
 /// BEFORE the <c>StartupUri</c> window is created, so the app never flashes the wrong
-/// palette (L9). The window is instantiated by <see cref="OnStartup"/> only after
+/// palette. The window is instantiated by <see cref="OnStartup"/> only after
 /// <see cref="Application.OnStartup(StartupEventArgs)"/> runs, so applying first is safe.
 /// </summary>
 public partial class App : Application

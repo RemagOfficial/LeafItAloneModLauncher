@@ -38,7 +38,6 @@ public static class LogColor
         if (Any(u, "PASS", " OK", "OK ---", "APPLIED", "REVERTED", "INSTALLED OK",
                    "PRESENT, MATCHES", "STATUS REFRESHED", "SAFE-BASE INSTALLED")
             || u.StartsWith("VERDICT: SAFE-BASE")
-            || u.Contains("+ M1 + M2 + M3 + M4 ACTIVE")
             || (u.StartsWith("--- ") && u.EndsWith(" OK ---")))
             return LogSeverity.Success;
 

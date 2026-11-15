@@ -15,7 +15,7 @@ public sealed record ProcessResult(int ExitCode, bool TimedOut, string? Fault = 
 /// <summary>
 /// The launcher's ONLY way to run an external engine. Every apply / revert /
 /// install / status call funnels through here, so patch logic is never duplicated
-/// in C# (plan: "absorb the UX, reuse the engines").
+/// in C#.
 ///
 /// <para>
 /// Builds <c>powershell.exe -NoProfile -ExecutionPolicy Bypass -File &lt;script&gt; ...</c>,

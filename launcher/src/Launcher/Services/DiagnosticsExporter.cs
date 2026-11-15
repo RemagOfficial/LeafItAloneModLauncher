@@ -7,7 +7,7 @@ using System.Linq;
 namespace LeafItAlone.Launcher.Services;
 
 /// <summary>
-/// 2b: builds a support bundle - a zip of the launcher's own diagnostics - with one
+/// builds a support bundle - a zip of the launcher's own diagnostics - with one
 /// hard rule: <b>no game-derived content ever leaves the machine.</b> The safety tree
 /// (<c>backup/</c>, <c>mod-backups/</c>) and every engine asset we patch
 /// (<c>*.bundle</c>, <c>catalog.bin</c>, Unity resource extensions) are refused by the

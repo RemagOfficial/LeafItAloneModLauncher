@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 namespace LeafItAlone.Launcher.Services;
 
 /// <summary>
-/// 2b: the self-update check. Compares the installed <see cref="AppInfo.Version"/>
+/// the self-update check. Compares the installed <see cref="AppInfo.Version"/>
 /// against the repo's latest GitHub release tag. Deliberately best-effort: a network
 /// failure, a rate-limit, or a repo with no releases all resolve to "unknown" so a
 /// launch is never blocked or nagged. The core comparison is a pure function so the

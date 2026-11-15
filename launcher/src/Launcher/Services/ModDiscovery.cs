@@ -16,7 +16,7 @@ public sealed record DiscoveryResult(
 /// Reads every <c>content-mods/&lt;id&gt;/mod.json</c> into a
 /// <see cref="ModInfo"/>. This is the data-driven core: the launcher's mod list is
 /// entirely a function of the manifests on disk, so shipping a new mod needs no
-/// code change (plan "Data model"). A broken manifest is reported and skipped
+/// code change. A broken manifest is reported and skipped
 /// rather than taking down the whole list.
 /// </summary>
 public sealed class ModDiscovery
@@ -56,8 +56,12 @@ public sealed class ModDiscovery
                 if (string.IsNullOrWhiteSpace(manifest.Id))
                     manifest.Id = Path.GetFileName(folder);   // fall back to folder name
 
-                if (string.IsNullOrWhiteSpace(manifest.Apply.Script))
-                    throw new InvalidDataException("apply.script is required");
+                // A mod is valid when it can DO something: a data mod ships an apply script,
+                // a code mod declares a dll the loader hosts. A manifest with neither is inert
+                // and is rejected rather than listed as a dead row.
+                if (string.IsNullOrWhiteSpace(manifest.Apply.Script)
+                    && string.IsNullOrWhiteSpace(manifest.Dll))
+                    throw new InvalidDataException("a mod must declare either apply.script or a dll");
 
                 mods.Add(new ModInfo(manifest, folder, manifestPath));
             }

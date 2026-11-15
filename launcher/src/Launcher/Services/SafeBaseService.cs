@@ -14,15 +14,15 @@ namespace LeafItAlone.Launcher.Services;
 /// authoritative health check is <c>status.ps1</c>, which <see cref="SafeBaseService"/>
 /// can also run and summarise.
 /// </summary>
-public sealed record SafeBaseInfo(bool Installed, string InstalledAt, string Milestone, string? GameExe)
+public sealed record SafeBaseInfo(bool Installed, string InstalledAt, string? GameExe)
 {
-    public static SafeBaseInfo NotInstalled { get; } = new(false, "", "", null);
+    public static SafeBaseInfo NotInstalled { get; } = new(false, "", null);
 }
 
 /// <summary>
 /// Drives the safe-base lifecycle by shelling out to the already-tested scripts in
 /// the engine folder (dev <c>safe-base/</c> or published <c>tools/</c>) — the launcher
-/// never reimplements any of it (plan: "absorb the UX, reuse the engines").
+/// never reimplements any of it.
 ///
 /// <para>
 /// <c>install.ps1</c> and <c>uninstall-all.ps1</c> both self-elevate through UAC and, in
@@ -72,7 +72,7 @@ public sealed class SafeBaseService
             var gameExe = Text("gameExe");
             // A manifest without a recorded, still-present game exe is not a usable install.
             string? exe = string.IsNullOrWhiteSpace(gameExe) ? null : gameExe;
-            return new SafeBaseInfo(true, Text("installedAt"), Text("milestone"), exe);
+            return new SafeBaseInfo(true, Text("installedAt"), exe);
         }
         catch
         {
@@ -96,9 +96,15 @@ public sealed class SafeBaseService
         return (captured.Result, ExtractVerdict(captured.Lines));
     }
 
-    /// <summary>Install the safe-base (self-elevates; waits on the elevated child's exit code).</summary>
+    /// <summary>
+    /// Install the safe-base (self-elevates; waits on the elevated child's exit code).
+    /// Runs with <c>-SkipOverlay</c>: the banner-only <c>version.dll</c> the framework would
+    /// drop is superseded by the real mod loader, which <see cref="LoaderService"/> installs
+    /// immediately afterwards (the loader's <c>version.dll</c> provides both the offline
+    /// banner and mod hosting, so dropping the banner overlay first would only be undone).
+    /// </summary>
     public Task<ProcessResult> InstallAsync() =>
-        _runner.RunPowerShellScriptAsync(Script("install.ps1"), new[] { "-Yes" },
+        _runner.RunPowerShellScriptAsync(Script("install.ps1"), new[] { "-Yes", "-SkipOverlay" },
             workingDir: _engineDir, timeout: LifecycleTimeout);
 
     /// <summary>Revert every registered mod, then uninstall the safe-base (self-elevates).</summary>

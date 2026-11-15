@@ -7,31 +7,39 @@ using LeafItAlone.Launcher.Models;
 namespace LeafItAlone.Launcher.Services;
 
 /// <summary>
-/// Mod-sources (2a R3): discovers built-in mods from <c>content-mods/</c> and every
-/// installed remote mod from <c>remote-mods/&lt;sourceKey&gt;/&lt;modId&gt;/</c>,
-/// merging them into a single list keyed by <see cref="ModInfo.Id"/>. Built-ins win
-/// on id collision so a user installing a remote mod that shadows a shipped one gets
-/// a clear warning rather than a silent swap.
+/// Mod sources: discovers every installed remote mod from
+/// <c>remote-mods/&lt;sourceKey&gt;/&lt;modId&gt;/</c> and, only when a built-in root is
+/// supplied, the shipped <c>content-mods/</c> catalog too, merging them into a single list
+/// keyed by <see cref="ModInfo.Id"/>. The launcher's Mods page passes a null built-in root
+/// so it lists installed mods only; callers that still want the catalog merged (tests) pass
+/// a real folder. Built-ins win on id collision so a user installing a remote mod that
+/// shadows a shipped one gets a clear warning rather than a silent swap.
 /// </summary>
 public sealed class CompositeModDiscovery
 {
     private readonly ModDiscovery _inner = new();
 
     /// <summary>
-    /// Sweep both roots. <paramref name="remoteRoots"/> is an optional list of
-    /// (sourceKey, absolute path) pairs; when null the discovery enumerates
-    /// subfolders of <see cref="RepoLocator.RemoteModsRoot"/> automatically. Pass an
-    /// explicit list in tests to avoid depending on the user's LocalAppData.
+    /// Sweep the roots. <paramref name="builtInModsRoot"/> is optional: when null or blank
+    /// no built-in catalog is scanned and only installed remote mods are returned.
+    /// <paramref name="remoteRoots"/> is an optional list of (sourceKey, absolute path)
+    /// pairs; when null the discovery enumerates subfolders of
+    /// <see cref="RepoLocator.RemoteModsRoot"/> automatically. Pass an explicit list in
+    /// tests to avoid depending on the user's LocalAppData.
     /// </summary>
-    public DiscoveryResult Discover(string builtInModsRoot, IEnumerable<(string SourceKey, string Url, string Path)>? remoteRoots = null)
+    public DiscoveryResult Discover(string? builtInModsRoot, IEnumerable<(string SourceKey, string Url, string Path)>? remoteRoots = null)
     {
         var mods = new List<ModInfo>();
         var errors = new List<string>();
 
-        // 1. Built-in mods: unchanged behaviour, but wrap ModInfo with IsRemote=false (default).
-        var local = _inner.Discover(builtInModsRoot);
-        errors.AddRange(local.Errors);
-        foreach (var m in local.Mods) mods.Add(m);
+        // 1. Built-in mods (optional). The launcher lists installed mods only, so it calls
+        // with a null root; anything here is IsRemote=false (the default).
+        if (!string.IsNullOrWhiteSpace(builtInModsRoot))
+        {
+            var local = _inner.Discover(builtInModsRoot);
+            errors.AddRange(local.Errors);
+            foreach (var m in local.Mods) mods.Add(m);
+        }
 
         // 2. Remote mods: enumerate one level under remote-mods/<sourceKey>/<modId>/.
         var effective = remoteRoots ?? AutoEnumerateRemoteRoots();

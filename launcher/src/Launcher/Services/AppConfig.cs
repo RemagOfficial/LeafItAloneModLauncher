@@ -6,7 +6,7 @@ using System.Text.Json.Serialization;
 namespace LeafItAlone.Launcher.Services;
 
 /// <summary>
-/// The launcher's own UI preferences (L9), stored beside <c>state.json</c> at
+/// The launcher's own UI preferences, stored beside <c>state.json</c> at
 /// <c>%LOCALAPPDATA%\LeafItAloneSafe\launcher\settings.json</c>. Distinct from a mod's
 /// config (the values the engines read) and from <see cref="LauncherState"/> (per-mod
 /// apply bookkeeping): this only remembers appearance and the two optional path
@@ -54,7 +54,7 @@ public sealed class AppConfig
     [JsonPropertyName("gameExeOverride")] public string GameExeOverride { get; set; } = "";
 
     /// <summary>
-    /// Mod-sources (2a R5): when false (the default), the launcher refuses to add
+    /// Mod sources: when false (the default), the launcher refuses to add
     /// third-party sources and Browse shows only the built-in repo. Users flip this
     /// on deliberately from Settings -> Mod sources to install scripts authored
     /// elsewhere. Never affects applying built-in mods.
@@ -62,32 +62,32 @@ public sealed class AppConfig
     [JsonPropertyName("allowNonDefaultSources")] public bool AllowNonDefaultSources { get; set; }
 
     /// <summary>
-    /// 2b: whether the output console is expanded. Defaults to <c>false</c> so a
+    /// whether the output console is expanded. Defaults to <c>false</c> so a
     /// fresh install opens with a clean, console-hidden window; the toggle remembers
     /// the user's last choice.
     /// </summary>
     [JsonPropertyName("consoleExpanded")] public bool ConsoleExpanded { get; set; }
 
     /// <summary>
-    /// 2b: last window size the user left the launcher at. Defaults are deliberately
+    /// last window size the user left the launcher at. Defaults are deliberately
     /// larger than the old hardcoded 1080x720 so the Browse / Installed layouts have
     /// room. Restored on startup and saved on resize (clamped in <see cref="Normalize"/>).
     /// </summary>
     [JsonPropertyName("windowWidth")] public double WindowWidth { get; set; } = DefaultWindowWidth;
 
-    /// <summary>2b: see <see cref="WindowWidth"/>.</summary>
+    /// <summary>see <see cref="WindowWidth"/>.</summary>
     [JsonPropertyName("windowHeight")] public double WindowHeight { get; set; } = DefaultWindowHeight;
 
     /// <summary>Minimum window size; also the floor the restored size is clamped to.</summary>
     public const double MinWindowWidth = 980;
     public const double MinWindowHeight = 620;
 
-    /// <summary>Larger default window (2b) so the two-pane mod layouts never clip.</summary>
+    /// <summary>Larger default window so the two-pane mod layouts never clip.</summary>
     public const double DefaultWindowWidth = 1400;
     public const double DefaultWindowHeight = 900;
 
     /// <summary>
-    /// 2b: the app version whose "What's new" panel the user has already seen. When
+    /// the app version whose "What's new" panel the user has already seen. When
     /// <see cref="Launcher.AppInfo.Version"/> differs, the panel shows once and this
     /// is updated, so it never repeats on every launch of the same version.
     /// </summary>

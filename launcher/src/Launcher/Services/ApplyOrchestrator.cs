@@ -44,7 +44,20 @@ public sealed class ApplyOrchestrator
     public string? PythonPath { get; set; }
 
     /// <summary>
-    /// L7: whether the resolved interpreter was probed and can import UnityPy. Defaults to
+    /// Applies/removes CODE mods (loader-hosted folders under the game's <c>Mods\</c>). Owned
+    /// here so <see cref="ApplyAsync"/> / <see cref="RevertAsync"/> can branch on mod kind.
+    /// </summary>
+    public CodeModService CodeMods { get; } = new();
+
+    /// <summary>
+    /// Resolves the game folder a code mod installs into, set by the VM from the safe-base
+    /// manifest. Null until wired (or when no game exe is recorded), in which case a code-mod
+    /// apply is refused with a readable message rather than guessing a path.
+    /// </summary>
+    public Func<string?>? GameDirResolver { get; set; }
+
+    /// <summary>
+    /// whether the resolved interpreter was probed and can import UnityPy. Defaults to
     /// true so a caller that never probes (or a mod that needs no Python) is unaffected; the
     /// VM sets it from <see cref="PythonHealth"/>. When false, a Python-requiring apply is
     /// blocked with a message that points at the Setup guide rather than silently failing.
@@ -52,7 +65,7 @@ public sealed class ApplyOrchestrator
     public bool PythonReady { get; set; } = true;
 
     /// <summary>
-    /// Mod-sources (2a R3): hook the VM sets so a remote mod's missing files are healed
+    /// Mod sources: hook the VM sets so a remote mod's missing files are healed
     /// before <see cref="ApplyAsync"/> shells out to <c>apply.ps1</c>. The hook receives
     /// the mod, returns a short message the caller logs, and Ok=false aborts the apply.
     /// Left null in tests and for built-in-mod-only installs.
@@ -78,10 +91,16 @@ public sealed class ApplyOrchestrator
     public string? BlockingReason(ModInfo mod, bool forRevert)
     {
         var req = mod.Manifest.Requires;
-        if (req.GameNotRunning && IsGameRunning())
+        // A running game blocks a code mod too: the loader keeps the hosted DLL open, so the
+        // install/remove copy would fail - force the check even if the manifest omits it.
+        if ((req.GameNotRunning || mod.IsCodeMod) && IsGameRunning())
             return $"\"{GameProcessName}\" is running - close the game first.";
         if (req.SafeBase && !SafeBaseInstalled())
             return "safe-base is not installed - install it before applying or reverting.";
+        // Code mods are hosted by the loader (a file copy), not patched by scripts, so the
+        // Python gate never applies to them.
+        if (mod.IsCodeMod)
+            return null;
         if (!forRevert && req.Python && string.IsNullOrEmpty(PythonPath))
             return "no Python interpreter found - open Setup to install Python 3.12 (amd64) + UnityPy.";
         if (!forRevert && req.Python && !PythonReady)
@@ -90,7 +109,7 @@ public sealed class ApplyOrchestrator
     }
 
     /// <summary>
-    /// The L4 sequence's per-mod decision, kept pure so it is unit-testable without a
+    /// The Apply &amp; Launch sequence's per-mod decision, kept pure so it is unit-testable without a
     /// running game: an enabled mod whose state differs from what is applied must be
     /// applied; a disabled mod that is still applied must be reverted; anything already
     /// in sync needs nothing.
@@ -132,7 +151,7 @@ public sealed class ApplyOrchestrator
 
     public async Task<ProcessResult> ApplyAsync(ModInfo mod)
     {
-        // Mod-sources R3: heal any missing/mismatched remote files before shelling out.
+        // Mod sources: heal any missing/mismatched remote files before running anything.
         // A built-in mod has no SourceKey so the hook short-circuits to Ok; a remote
         // mod that fails verification aborts the apply with a readable Fault so the
         // user is never left running scripts we can't account for.
@@ -141,9 +160,37 @@ public sealed class ApplyOrchestrator
             var (ok, message) = await EnsurePresentHook(mod).ConfigureAwait(false);
             if (!ok) return new ProcessResult(-1, TimedOut: false, Fault: message);
         }
+        // A code mod is installed by copying its folder into the game's Mods\ tree for the
+        // loader to host; there is no apply.ps1 to shell out to.
+        if (mod.IsCodeMod)
+            return await ApplyCodeModAsync(mod).ConfigureAwait(false);
         return await _runner.RunPowerShellScriptAsync(mod.ApplyScript, BuildApplyArgs(mod), workingDir: mod.Folder).ConfigureAwait(false);
     }
 
-    public Task<ProcessResult> RevertAsync(ModInfo mod)
-        => _runner.RunPowerShellScriptAsync(mod.RevertScript, BuildRevertArgs(mod), workingDir: mod.Folder);
+    public async Task<ProcessResult> RevertAsync(ModInfo mod)
+    {
+        if (mod.IsCodeMod)
+            return await RevertCodeModAsync(mod).ConfigureAwait(false);
+        return await _runner.RunPowerShellScriptAsync(mod.RevertScript, BuildRevertArgs(mod), workingDir: mod.Folder).ConfigureAwait(false);
+    }
+
+    private async Task<ProcessResult> ApplyCodeModAsync(ModInfo mod)
+    {
+        var gameDir = GameDirResolver?.Invoke();
+        if (string.IsNullOrWhiteSpace(gameDir))
+            return new ProcessResult(-1, TimedOut: false,
+                Fault: "could not find the game folder to install the code mod into - install the safe-base first (it records the game path).");
+        var (ok, message) = await CodeMods.EnableAsync(mod, gameDir!).ConfigureAwait(false);
+        return ok ? new ProcessResult(0, TimedOut: false) : new ProcessResult(-1, TimedOut: false, Fault: message);
+    }
+
+    private async Task<ProcessResult> RevertCodeModAsync(ModInfo mod)
+    {
+        var gameDir = GameDirResolver?.Invoke();
+        if (string.IsNullOrWhiteSpace(gameDir))
+            return new ProcessResult(-1, TimedOut: false,
+                Fault: "could not find the game folder to remove the code mod from - install the safe-base first.");
+        var (ok, message) = await CodeMods.DisableAsync(mod, gameDir!).ConfigureAwait(false);
+        return ok ? new ProcessResult(0, TimedOut: false) : new ProcessResult(-1, TimedOut: false, Fault: message);
+    }
 }

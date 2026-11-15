@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using LeafItAlone.Launcher.Models;
@@ -20,10 +21,26 @@ public sealed record RemoteModEntry(
     string GameVersion,
     string FolderPathInRepo,
     IReadOnlyList<RemoteFileEntry> Files,
-    string? ManifestError);
+    string? ManifestError,
+    bool IsCodeMod = false);
 
 /// <summary>A file inside a mod folder on the remote. The <see cref="Sha"/> is GitHub's blob sha.</summary>
 public sealed record RemoteFileEntry(string Path, string Sha, long Size, bool IsDirectory);
+
+/// <summary>
+/// The mod loader published at a source's repo-root <c>loader/</c> folder: its version plus
+/// the DLL file set the game needs (<c>version.dll</c> and its managed assemblies). The
+/// launcher installs these alongside the safe-base so the loader is always fetched up to
+/// date from the same repo the mods come from. <see cref="Present"/> is false when the
+/// source carries no <c>loader/</c> folder at all.
+/// </summary>
+public sealed record LoaderListing(
+    bool Present,
+    string Version,
+    string FolderPathInRepo,
+    IReadOnlyList<string> Dlls,
+    IReadOnlyList<RemoteFileEntry> Files,
+    string? Error);
 
 /// <summary>Snapshot of one source's listing at one commit; drives the Browse tab.</summary>
 public sealed record SourceSnapshot(
@@ -33,11 +50,12 @@ public sealed record SourceSnapshot(
     string Sha,
     DateTimeOffset FetchedUtc,
     IReadOnlyList<RemoteModEntry> Mods,
-    IReadOnlyList<string> Errors);
+    IReadOnlyList<string> Errors,
+    LoaderListing? Loader = null);
 
 /// <summary>
 /// Fetches and parses listings for a <see cref="ModSource"/> over the GitHub REST API
-/// (mod-sources 2a R2). Deliberately does no caching of its own; callers decide what
+/// (Mod sources). Deliberately does no caching of its own; callers decide what
 /// to persist and where. Rate-limit state is exposed so the UI can show a friendly
 /// "retry in Xm" message when the budget runs out.
 /// </summary>
@@ -69,6 +87,10 @@ public sealed class GitHubSourceService
         var snapshot = new List<RemoteModEntry>();
         var errors = new List<string>();
 
+        // The loader lives beside content-mods/ at the repo root. Fetch it first so a
+        // repo without content-mods/ still reports its loader (a loader-only repo is valid).
+        var loader = await FetchLoaderListingAsync(owner, repo, sha, ct).ConfigureAwait(false);
+
         IReadOnlyList<GitHubEntry> top;
         try
         {
@@ -78,7 +100,7 @@ public sealed class GitHubSourceService
         {
             // A repo without content-mods/ is a valid repo, just not a mod source.
             errors.Add($"repo {owner}/{repo} has no content-mods/ directory at sha {sha[..Math.Min(7, sha.Length)]}");
-            return new SourceSnapshot(source.Key, owner, repo, sha, DateTimeOffset.UtcNow, snapshot, errors);
+            return new SourceSnapshot(source.Key, owner, repo, sha, DateTimeOffset.UtcNow, snapshot, errors, loader);
         }
 
         foreach (var modDir in top.Where(e => string.Equals(e.Type, "dir", StringComparison.OrdinalIgnoreCase)))
@@ -120,7 +142,8 @@ public sealed class GitHubSourceService
                     GameVersion: manifest?.GameVersion ?? "",
                     FolderPathInRepo: modDir.Path,
                     Files: files,
-                    ManifestError: manifestError));
+                    ManifestError: manifestError,
+                    IsCodeMod: !string.IsNullOrWhiteSpace(manifest?.Dll)));
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -128,7 +151,64 @@ public sealed class GitHubSourceService
             }
         }
 
-        return new SourceSnapshot(source.Key, owner, repo, sha, DateTimeOffset.UtcNow, snapshot, errors);
+        return new SourceSnapshot(source.Key, owner, repo, sha, DateTimeOffset.UtcNow, snapshot, errors, loader);
+    }
+
+    /// <summary>
+    /// Enumerate a source's <c>loader/</c> folder and parse its <c>loader.json</c>
+    /// (<c>{ "version", "files": [...], "minLauncherVersion" }</c>). Best-effort: a repo
+    /// with no <c>loader/</c> directory returns a <see cref="LoaderListing"/> with
+    /// <c>Present=false</c> rather than throwing, so Browse still lists the mods and the
+    /// install flow can show a clear "source has no loader" message. The listing only
+    /// walks one level (the loader is a flat file set, not a tree).
+    /// </summary>
+    private async Task<LoaderListing> FetchLoaderListingAsync(
+        string owner, string repo, string sha, CancellationToken ct)
+    {
+        const string folder = "loader";
+        IReadOnlyList<GitHubEntry> entries;
+        try
+        {
+            entries = await _api.ListDirAsync(owner, repo, sha, folder, ct).ConfigureAwait(false);
+        }
+        catch (GitHubApiException ex) when (ex.Status == System.Net.HttpStatusCode.NotFound)
+        {
+            return new LoaderListing(false, "", folder, Array.Empty<string>(), Array.Empty<RemoteFileEntry>(),
+                "source has no loader/ folder");
+        }
+
+        var files = new List<RemoteFileEntry>();
+        foreach (var e in entries)
+        {
+            var isDir = string.Equals(e.Type, "dir", StringComparison.OrdinalIgnoreCase);
+            files.Add(new RemoteFileEntry(e.Path, e.Sha, e.Size, isDir));
+        }
+
+        var manifestFile = files.FirstOrDefault(f =>
+            !f.IsDirectory && string.Equals(f.Path.Split('/').Last(), "loader.json", StringComparison.OrdinalIgnoreCase));
+        string version = "";
+        IReadOnlyList<string> dlls = Array.Empty<string>();
+        string? error = null;
+        if (manifestFile is null)
+        {
+            error = "loader/ has no loader.json";
+        }
+        else
+        {
+            try
+            {
+                var (bytes, _) = await _api.DownloadFileAsync(owner, repo, sha, manifestFile.Path, ct).ConfigureAwait(false);
+                var dto = ParseLoaderManifest(bytes);
+                version = dto.Version;
+                dlls = dto.Files.Where(f => !string.IsNullOrWhiteSpace(f)).Select(f => f.Trim()).ToList();
+            }
+            catch (Exception ex)
+            {
+                error = "loader.json parse failed: " + ex.Message;
+            }
+        }
+
+        return new LoaderListing(true, version, folder, dlls, files, error);
     }
 
     /// <summary>
@@ -237,9 +317,31 @@ public sealed class GitHubSourceService
         };
         var m = JsonSerializer.Deserialize<ModManifest>(json, opts)
             ?? throw new InvalidDataException("mod.json is empty");
-        if (string.IsNullOrWhiteSpace(m.Apply?.Script))
-            throw new InvalidDataException("apply.script is required");
+        // A mod must be able to DO something: a data mod ships an apply script, a code mod
+        // declares a dll the loader hosts. Neither means an inert manifest.
+        if (string.IsNullOrWhiteSpace(m.Apply?.Script) && string.IsNullOrWhiteSpace(m.Dll))
+            throw new InvalidDataException("a mod must declare either apply.script or a dll");
         return m;
+    }
+
+    /// <summary>Wire shape of a source's <c>loader/loader.json</c>.</summary>
+    private sealed class LoaderManifestDto
+    {
+        [JsonPropertyName("version")] public string Version { get; set; } = "";
+        [JsonPropertyName("files")] public List<string> Files { get; set; } = new();
+        [JsonPropertyName("minLauncherVersion")] public string MinLauncherVersion { get; set; } = "";
+    }
+
+    private static LoaderManifestDto ParseLoaderManifest(byte[] json)
+    {
+        var opts = new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true,
+            ReadCommentHandling = JsonCommentHandling.Skip,
+            AllowTrailingCommas = true,
+        };
+        return JsonSerializer.Deserialize<LoaderManifestDto>(json, opts)
+            ?? throw new InvalidDataException("loader.json is empty");
     }
 
     private static async Task<byte[]> SafeReadAllBytesAsync(string path, CancellationToken ct)

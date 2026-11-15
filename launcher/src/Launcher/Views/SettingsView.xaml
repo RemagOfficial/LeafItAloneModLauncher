@@ -142,7 +142,7 @@
                 </StackPanel>
             </Border>
 
-            <!-- Mod sources (2a R4): list of GitHub repos the Browse tab fetches from. -->
+            <!-- Mod sources: list of GitHub repos the Browse tab fetches from. -->
             <Border Style="{StaticResource Card}" Margin="0,14,0,0">
                 <StackPanel>
                     <TextBlock Text="Mod sources" Style="{StaticResource SectionTitle}" />
@@ -210,7 +210,7 @@
                 </StackPanel>
             </Border>
 
-            <!-- About & maintenance (2b): the app version (single source: the assembly) and the
+            <!-- About & maintenance: the app version (single source: the assembly) and the
                  one-click diagnostics bundle. The exporter provably refuses every game file. -->
             <Border Style="{StaticResource Card}" Margin="0,14,0,0">
                 <StackPanel>

@@ -173,5 +173,5 @@ shell out to something unusual, document it in the mod's README and in the trust
 
 The v1 fetcher (`GitHubSourceService`) uses the GitHub REST API exclusively. GitLab,
 Codeberg and Bitbucket are not supported yet, but the service is deliberately named for
-GitHub so an adapter for another host is a follow-on milestone rather than a rewrite.
+GitHub so an adapter for another host is a follow-on addition rather than a rewrite.
 For now: host your repo on GitHub.

@@ -9,23 +9,24 @@ namespace LeafItAlone.Launcher.ViewModels;
 
 /// <summary>
 /// Backing VM for <c>MainWindow</c>. Discovers mods from their manifests and builds
-/// a schema-driven <see cref="ConfigEditorViewModel"/> for each. L3 adds apply/revert
+/// a schema-driven <see cref="ConfigEditorViewModel"/> for each. Adds apply/revert
 /// orchestration: the selected mod's Apply/Revert buttons drive the real
 /// <c>apply.ps1</c>/<c>revert.ps1</c> through <see cref="ApplyOrchestrator"/> +
 /// <see cref="ProcessRunner"/>, mirror the scripts' preconditions for a friendly
 /// early message, stream the engine's output to the log, and on success record the
-/// applied sha + version in state.json so the pending badge clears. Launch (L4) and
-/// the safe-base lifecycle (L5) hang off this same VM later.
+/// applied sha + version in state.json so the pending badge clears. Launch and
+/// the safe-base lifecycle hang off this same VM too.
 /// </summary>
 public sealed class MainViewModel : ObservableObject
 {
     private readonly RepoLocator _locator = new();
-    private readonly ModDiscovery _discovery = new();
     private readonly CompositeModDiscovery _compositeDiscovery = new();
     private readonly ProcessRunner _runner = new();
     private readonly ApplyOrchestrator _ops;
     private SafeBaseService? _safeBase;
     private SafeBaseInfo _safeBaseInfo = SafeBaseInfo.NotInstalled;
+    private LoaderService? _loader;
+    private LoaderInfo _loaderInfo = LoaderInfo.NotInstalled;
     private string _safeBaseVerdict = "";
     private PythonHealthResult _python = new(PythonStatus.Unknown, "", "");
     private bool _pythonPromptShown;
@@ -34,7 +35,7 @@ public sealed class MainViewModel : ObservableObject
     private AppConfig _config = new();
     private string _configPath = "";
 
-    // ---- Mod-sources (2a): shared plumbing wired once per Rescan() ----
+    // ---- Mod sources: shared plumbing wired once per Rescan() ----
     private SourceRegistry _sources = SourceRegistry.CreateDefault();
     private string _sourcesPath = "";
     private GitHubApi? _gitApi;
@@ -56,7 +57,7 @@ public sealed class MainViewModel : ObservableObject
         RefreshStatusCommand = new RelayCommand(async _ => await RefreshStatusAsync(), _ => !IsBusy && _safeBase is not null);
         PythonSetupCommand = new RelayCommand(_ => RequestPythonSetup?.Invoke(this, EventArgs.Empty));
 
-        // L9: nav + settings commands.
+        // nav + settings commands.
         SelectSectionCommand = new RelayCommand(p => SelectSection(p));
         BrowseContentRootCommand = new RelayCommand(_ => RequestBrowseContentRoot?.Invoke(this, EventArgs.Empty));
         BrowseGameExeCommand = new RelayCommand(_ => RequestBrowseGameExe?.Invoke(this, EventArgs.Empty));
@@ -67,7 +68,7 @@ public sealed class MainViewModel : ObservableObject
         SelectAccentCommand = new RelayCommand(p => { if (p is string s) AccentChoice = s; });
         ClearLogCommand = new RelayCommand(_ => { LogLines.Clear(); Log("output cleared"); });
 
-        // Mod-sources (2a R4/R5): commands wired to async implementations below.
+        // Mod sources: commands wired to async implementations below.
         RefreshSourcesCommand = new RelayCommand(async _ => await RefreshSourcesAsync(), _ => !IsBusy && !BrowseBusy);
         AddSourceCommand = new RelayCommand(async _ => await AddSourceAsync(), _ => !IsBusy && !string.IsNullOrWhiteSpace(NewSourceUrl) && _config.AllowNonDefaultSources);
         RemoveSourceCommand = new RelayCommand(async _ => await RemoveSourceAsync(), _ => !IsBusy && SelectedSource is not null);
@@ -75,7 +76,7 @@ public sealed class MainViewModel : ObservableObject
         OpenRemoteModsFolderCommand = new RelayCommand(_ => OpenRemoteModsFolder());
         SetModsPageModeCommand = new RelayCommand(p => { if (p is string s) ModsPageMode = s; });
 
-        // 2b: self-update / diagnostics commands.
+        // self-update / diagnostics commands.
         OpenUpdatePageCommand = new RelayCommand(_ => OpenUrl(UpdateUrl), _ => UpdateAvailable && !string.IsNullOrWhiteSpace(UpdateUrl));
         ExportDiagnosticsCommand = new RelayCommand(async _ => await ExportDiagnosticsAsync(), _ => !IsBusy);
 
@@ -92,7 +93,7 @@ public sealed class MainViewModel : ObservableObject
 
         Rescan();
 
-        // 2b: kick off the non-critical network services (self-update check +
+        // kick off the non-critical network services (self-update check +
         // first-run What's new) without blocking startup. Launched from the UI
         // thread, so its awaits resume there (no ConfigureAwait(false)) and every
         // property/binding update stays on the dispatcher.
@@ -105,7 +106,7 @@ public sealed class MainViewModel : ObservableObject
     public ObservableCollection<string> LogLines { get; } = new();
 
     /// <summary>
-    /// 2b conflict detection: human-readable warnings for engine values that two or
+    /// conflict detection: human-readable warnings for engine values that two or
     /// more *enabled* mods both rewrite, recomputed whenever the enable set changes.
     /// Empty when nothing collides (the normal case for the shipped mods). Bound to a
     /// warning card on the Mods page.
@@ -115,7 +116,7 @@ public sealed class MainViewModel : ObservableObject
     /// <summary>True when <see cref="ConflictWarnings"/> has anything to show (drives the card's visibility).</summary>
     public bool HasConflicts => ConflictWarnings.Count > 0;
 
-    // ---- Mod-sources (2a R4): data-driven UI surfaces for the Browse + Settings tabs. ----
+    // ---- Mod sources: data-driven UI surfaces for the Browse + Settings tabs. ----
     public ObservableCollection<SourceItem> Sources { get; } = new();
     public ObservableCollection<BrowseItem> BrowseItems { get; } = new();
     private bool _browseBusy;
@@ -151,7 +152,7 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand InstallRemoteCommand { get; private set; } = null!;
     public RelayCommand OpenRemoteModsFolderCommand { get; private set; } = null!;
 
-    // 2b: self-update download link + diagnostics bundle.
+    // self-update download link + diagnostics bundle.
     public RelayCommand OpenUpdatePageCommand { get; private set; } = null!;
     public RelayCommand ExportDiagnosticsCommand { get; private set; } = null!;
 
@@ -171,7 +172,7 @@ public sealed class MainViewModel : ObservableObject
     public string UpdateUrl { get => _updateUrl; private set => Set(ref _updateUrl, value); }
 
     /// <summary>
-    /// 2b: raised once per app version to show the "What's new" panel. The View owns
+    /// raised once per app version to show the "What's new" panel. The View owns
     /// the window (same seam pattern as <see cref="RequestTrustApproval"/>); null in
     /// tests, in which case the panel is simply not shown but the version is still
     /// marked seen so it never nags.
@@ -179,7 +180,7 @@ public sealed class MainViewModel : ObservableObject
     public System.Action<string /*title*/, string /*markdown body*/>? RequestWhatsNew { get; set; }
 
     /// <summary>
-    /// Raised when the trust modal (R5) needs to run before an install proceeds.
+    /// Raised when the trust modal needs to run before an install proceeds.
     /// The View owns the dialog and returns whether the user typed INSTALL.
     /// Null = no gate (used in tests); a null handler is treated as "user approved".
     /// </summary>
@@ -205,7 +206,7 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 2b: whether the output console is expanded. Bound two-way to the console
+    /// whether the output console is expanded. Bound two-way to the console
     /// toggle. Persists so the window reopens the way the user left it; defaults to
     /// collapsed for a clean first impression.
     /// </summary>
@@ -222,14 +223,14 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 2b: window size. Restored from <c>settings.json</c> on startup and written
+    /// window size. Restored from <c>settings.json</c> on startup and written
     /// back once on close (not per resize tick). The View reads these in its ctor and
     /// calls <see cref="SaveWindowSize"/> from <c>OnClosing</c>.
     /// </summary>
     public double WindowWidth => _config.WindowWidth;
     public double WindowHeight => _config.WindowHeight;
 
-    /// <summary>2b: persist the window's current size; floored to the minimum by AppConfig.Normalize.</summary>
+    /// <summary>persist the window's current size; floored to the minimum by AppConfig.Normalize.</summary>
     public void SaveWindowSize(double width, double height)
     {
         if (System.Math.Abs(_config.WindowWidth - width) < 1 && System.Math.Abs(_config.WindowHeight - height) < 1)
@@ -273,18 +274,29 @@ public sealed class MainViewModel : ObservableObject
         ? "no changes to apply - Launch starts the game as-is"
         : $"{PendingCount} mod(s) pending - Apply & Launch pushes them, then starts the game";
 
-    // ---- L5: safe-base lifecycle ----
+    // ---- safe-base lifecycle ----
 
     /// <summary>True once the safe-base manifest exists (its install marker).</summary>
     public bool SafeBaseInstalled => _safeBaseInfo.Installed;
 
-    /// <summary>True when nothing is installed yet - the Dashboard's first-run prompt.</summary>
-    public bool FirstRunNeeded => !_safeBaseInfo.Installed;
+    /// <summary>True once the mod loader file set is in the game folder and the manifest agrees.</summary>
+    public bool LoaderInstalled => _loaderInfo.Installed;
+
+    /// <summary>
+    /// True when the combined setup is incomplete - either the safe-base or the loader is
+    /// missing - so the Dashboard's install call-to-action stays up until both are present.
+    /// </summary>
+    public bool FirstRunNeeded => !_safeBaseInfo.Installed || !_loaderInfo.Installed;
 
     /// <summary>What the Dashboard shows about the framework's install state.</summary>
     public string SafeBaseSummary => _safeBaseInfo.Installed
-        ? $"Installed ({_safeBaseInfo.Milestone}) - game: {ShortExe(_safeBaseInfo.GameExe)}"
+        ? $"Installed - game: {ShortExe(_safeBaseInfo.GameExe)}"
         : "Not installed - the safe-base must be installed before mods can apply.";
+
+    /// <summary>What the Dashboard shows about the mod loader (installed alongside the safe-base).</summary>
+    public string LoaderSummary => _loaderInfo.Installed
+        ? $"Mod loader v{_loaderInfo.Version} installed - the loader hosts code mods and draws the offline banner."
+        : "Mod loader not installed.";
 
     /// <summary>The one-line VERDICT from the last full status run (empty until you run it).</summary>
     public string SafeBaseVerdict
@@ -327,7 +339,7 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand RefreshStatusCommand { get; }
     public RelayCommand PythonSetupCommand { get; }
 
-    // ---- L9: navigation + app settings ----
+    // ---- navigation + app settings ----
 
     public RelayCommand SelectSectionCommand { get; }
     public RelayCommand BrowseContentRootCommand { get; }
@@ -511,7 +523,7 @@ public sealed class MainViewModel : ObservableObject
     private static string NormalizeHex(string s) => s.Trim().ToUpperInvariant();
 
 
-    // ---- L7: Python runtime detection + guided setup ----
+    // ---- Python runtime detection + guided setup ----
 
     /// <summary>
     /// Raised when the launcher wants the Setup guide shown - automatically the first time a
@@ -546,9 +558,10 @@ public sealed class MainViewModel : ObservableObject
     private bool CanApply => !IsBusy && SelectedEditor is { IsPending: true };
     private bool CanRevert => !IsBusy && SelectedEditor is { IsApplied: true };
 
-    // Install only when the base is absent; Uninstall only when present; both need the
-    // engine folder resolved and the game closed (the scripts also enforce these).
-    private bool CanInstallSafeBase => !IsBusy && _safeBase is not null && !_safeBaseInfo.Installed;
+    // Install runs the combined loader + safe-base setup; it is offered until BOTH are in
+    // place. Uninstall only when the base is present. Both need the engine folder resolved
+    // and the game closed (the scripts and loader also enforce these).
+    private bool CanInstallSafeBase => !IsBusy && _safeBase is not null && (!_safeBaseInfo.Installed || !_loaderInfo.Installed);
     private bool CanUninstallAll => !IsBusy && _safeBase is not null && _safeBaseInfo.Installed;
 
     private void RefreshCommands()
@@ -576,6 +589,7 @@ public sealed class MainViewModel : ObservableObject
             RootPath = "";
             _safeBase = null;
             _safeBaseInfo = SafeBaseInfo.NotInstalled;
+            _loaderInfo = LoaderInfo.NotInstalled;
             RaiseSafeBaseProps();
             StatusText = "Content root not found.";
             Log(_locator.LastError ?? "unknown locator error");
@@ -586,7 +600,7 @@ public sealed class MainViewModel : ObservableObject
         _statePath = LauncherState.DefaultPath();
         _state = LauncherState.Load(_statePath);
 
-        // Mod-sources (2a): load the source list next to state.json so Browse/Install
+        // Mod sources: load the source list next to state.json so Browse/Install
         // has its data ready before the first UI refresh. The GitHub services are
         // created lazily - only when the user actually hits Browse or Apply on a
         // remote mod do we need them - but the stager wiring happens here so
@@ -596,18 +610,22 @@ public sealed class MainViewModel : ObservableObject
         _gitApi ??= new GitHubApi();
         _gitSource ??= new GitHubSourceService(_gitApi);
         _stager ??= new RemoteModStager(_gitApi, _gitSource);
+        _loader ??= new LoaderService(_gitApi);
         _ops.EnsurePresentHook = EnsureRemotePresentAsync;
+        _ops.GameDirResolver = ResolveGameDir;   // code mods install into the game's Mods\ tree
 
         // The engine folder (safe-base/ or tools/) holds install/status/uninstall-all.
         _safeBase = new SafeBaseService(_runner, _locator.SafeBaseDir);
         RefreshSafeBaseState();
         RaiseGameExeDisplay();
 
-        // Discovery now merges the built-in content-mods/ with every installed remote
-        // mod under remote-mods/<sourceKey>/. We feed it the (key,url,path) triples so
-        // the wrapped ModInfo carries the source URL for the Details pane.
+        // The Mods list shows INSTALLED mods only: every mod under remote-mods/<sourceKey>/.
+        // We feed the (key,url,path) triples so the wrapped ModInfo carries the source URL
+        // for the Details pane. Built-in content-mods/ are deliberately NOT auto-listed - they
+        // are the source repo's catalog, brought in through Browse -> Install on demand, which
+        // keeps a fresh test machine's list honest about what has actually been downloaded.
         var remoteRoots = BuildRemoteTriples();
-        var result = _compositeDiscovery.Discover(_locator.ModsRoot!, remoteRoots);
+        var result = _compositeDiscovery.Discover(builtInModsRoot: null, remoteRoots: remoteRoots);
         foreach (var err in result.Errors) Log("[manifest error] " + err);
 
         Editors.Clear();
@@ -633,7 +651,7 @@ public sealed class MainViewModel : ObservableObject
         }
         SelectedEditor = Editors.FirstOrDefault();
 
-        // Locate the interpreter for apply.ps1, then validate it asynchronously (L7):
+        // Locate the interpreter for apply.ps1, then validate it asynchronously:
         // "does it exist AND import UnityPy". We do not embed a Python, so a not-ready
         // result raises RequestPythonSetup once to guide the user to install it.
         _ops.PythonPath = PythonLocator.Resolve(_locator.Root);
@@ -641,8 +659,8 @@ public sealed class MainViewModel : ObservableObject
         _ = ProbePythonAsync();
 
         StatusText = Editors.Count == 0
-            ? $"No mod manifests found at {RootPath}"
-            : $"{Editors.Count} mod(s) at {RootPath}";
+            ? "No mods installed yet - open Browse to install one from a source."
+            : $"{Editors.Count} mod(s) installed";
         RaisePendingCount();
         RecomputeConflicts();
         RefreshCommands();
@@ -677,7 +695,7 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 2b: re-run <see cref="ConflictAnalyzer"/> over the currently-enabled mods and
+    /// re-run <see cref="ConflictAnalyzer"/> over the currently-enabled mods and
     /// refresh <see cref="ConflictWarnings"/>. Cheap (in-memory manifest reads), so it
     /// runs on every enable toggle and after a rescan. Logs newly-appeared warnings
     /// once so a risky combine is visible in the console too, not just the card.
@@ -702,7 +720,7 @@ public sealed class MainViewModel : ObservableObject
     /// preconditions, push any edits to disk, run <c>apply.ps1</c>, and on a clean exit
     /// record the applied sha + version + enabled in state.json so the badge clears.
     /// Returns true on success; a block / non-zero exit / timeout means the game was
-    /// left untouched. Shared by the per-mod Apply button and the L4 "Apply &amp; Launch"
+    /// left untouched. Shared by the per-mod Apply button and the "Apply &amp; Launch"
     /// sequence.
     /// </summary>
     private async System.Threading.Tasks.Task<bool> ApplyOneAsync(ConfigEditorViewModel ed)
@@ -711,23 +729,28 @@ public sealed class MainViewModel : ObservableObject
         var block = _ops.BlockingReason(mod, forRevert: false);
         if (block is not null) { Log($"[apply blocked] {mod.Id}: {block}"); StatusText = block; return false; }
 
-        ed.Save();   // push any edits to disk before the engine reads the config
-        Log($"--- apply {mod.Id} v{mod.Version} (python: {PythonOrDefault()}) ---");
+        if (mod.IsDataMod) ed.Save();   // push config edits to disk before apply.ps1 reads them
+        Log(mod.IsCodeMod
+            ? $"--- enable code mod {mod.Id} v{mod.Version} (installs into the game's Mods folder) ---"
+            : $"--- apply {mod.Id} v{mod.Version} (python: {PythonOrDefault()}) ---");
         var res = await _ops.ApplyAsync(mod);
         if (res.Success)
         {
+            // A code mod has no live config to fingerprint; record a stable "applied" marker
+            // so the applied/pending badges and the revert path behave like a data mod.
+            var appliedSha = mod.IsCodeMod ? CodeAppliedSha(mod) : ed.CurrentConfigSha;
             var st = _state.For(mod.Id);
             st.Enabled = true;
-            st.LastAppliedConfigSha = ed.CurrentConfigSha;
+            st.LastAppliedConfigSha = appliedSha;
             st.AppliedVersion = mod.Version;
             TrySaveState();
-            ed.MarkApplied(ed.CurrentConfigSha);
+            ed.MarkApplied(appliedSha);
             ed.Enabled = true;
-            ed.Info = $"applied v{mod.Version}";
-            Log("--- apply OK ---");
+            ed.Info = mod.IsCodeMod ? $"installed - loads next launch (v{mod.Version})" : $"applied v{mod.Version}";
+            Log(mod.IsCodeMod ? "--- code mod installed ---" : "--- apply OK ---");
             return true;
         }
-        Log(res.TimedOut ? "--- apply TIMEOUT ---" : $"--- apply FAILED (exit {res.ExitCode}) ---");
+        Log(res.Fault ?? (res.TimedOut ? "--- apply TIMEOUT ---" : $"--- apply FAILED (exit {res.ExitCode}) ---"));
         return false;
     }
 
@@ -741,7 +764,7 @@ public sealed class MainViewModel : ObservableObject
         var block = _ops.BlockingReason(mod, forRevert: true);
         if (block is not null) { Log($"[revert blocked] {mod.Id}: {block}"); StatusText = block; return false; }
 
-        Log($"--- revert {mod.Id} ---");
+        Log(mod.IsCodeMod ? $"--- disable code mod {mod.Id} (removes it from the game's Mods folder) ---" : $"--- revert {mod.Id} ---");
         var res = await _ops.RevertAsync(mod);
         if (res.Success)
         {
@@ -752,13 +775,18 @@ public sealed class MainViewModel : ObservableObject
             TrySaveState();
             ed.MarkReverted();
             ed.Enabled = false;
-            ed.Info = "reverted to vanilla";
-            Log("--- revert OK ---");
+            ed.Info = mod.IsCodeMod ? "removed - stops loading next launch" : "reverted to vanilla";
+            Log(mod.IsCodeMod ? "--- code mod removed ---" : "--- revert OK ---");
             return true;
         }
-        Log(res.TimedOut ? "--- revert TIMEOUT ---" : $"--- revert FAILED (exit {res.ExitCode}) ---");
+        Log(res.Fault ?? (res.TimedOut ? "--- revert TIMEOUT ---" : $"--- revert FAILED (exit {res.ExitCode}) ---"));
         return false;
     }
+
+    /// <summary>Stable applied-marker for a code mod (it has no config sha to fingerprint).</summary>
+    private static string CodeAppliedSha(Models.ModInfo mod) =>
+        "code:" + (string.IsNullOrEmpty(mod.Version) ? mod.Id : mod.Version);
+
 
     // ---- per-mod buttons: run the core for the selected mod + a status line ----
 
@@ -780,7 +808,7 @@ public sealed class MainViewModel : ObservableObject
         finally { IsBusy = false; }
     }
 
-    // ---- L4: Apply & Launch ----
+    // ---- Apply & Launch ----
 
     /// <summary>
     /// The Dashboard's one action: reconcile every mod against its enable toggle in
@@ -795,7 +823,7 @@ public sealed class MainViewModel : ObservableObject
         IsBusy = true;
         try
         {
-            // 2b: make a risky combine explicit right before touching the game.
+            // make a risky combine explicit right before touching the game.
             RecomputeConflicts();
             foreach (var w in ConflictWarnings) Log("[conflict] " + w);
 
@@ -838,16 +866,27 @@ public sealed class MainViewModel : ObservableObject
     }
 
 
-    // ---- L5: safe-base lifecycle flows ----
+    // ---- Loader + safe-base lifecycle flows ----
 
-    /// <summary>Install the safe-base (self-elevates). Blocks if the game is running.</summary>
+    /// <summary>
+    /// One action that sets the machine up to mod: install the safe-base (with its
+    /// banner-overlay step skipped), then fetch and install the real mod loader into the
+    /// game folder from a source repo. Blocks when the game is running, when the safe-base
+    /// fails, or when the loader cannot be fetched, so the two are never left half-applied.
+    /// Re-running it once the base exists just refreshes the loader.
+    /// </summary>
     private async System.Threading.Tasks.Task InstallSafeBaseAsync()
     {
         if (_safeBase is null) { StatusText = "Engine folder not found - cannot install."; return; }
-        if (_safeBaseInfo.Installed) { StatusText = "safe-base is already installed."; RefreshSafeBaseState(); return; }
+        if (_safeBaseInfo.Installed && _loaderInfo.Installed)
+        {
+            StatusText = "Mod loader and safe-base are already installed.";
+            RefreshSafeBaseState();
+            return;
+        }
         if (ApplyOrchestrator.IsGameRunning())
         {
-            StatusText = "Close the game before installing safe-base.";
+            StatusText = "Close the game before installing the loader + safe-base.";
             Log("[install blocked] Leaf it Alone is running - close it first");
             return;
         }
@@ -855,13 +894,61 @@ public sealed class MainViewModel : ObservableObject
         IsBusy = true;
         try
         {
-            Log("--- install safe-base (a UAC prompt will appear) ---");
-            var res = await _safeBase.InstallAsync();
-            if (res.Success) { Log("--- install OK ---"); StatusText = "safe-base installed."; }
-            else Log(res.TimedOut ? "--- install TIMEOUT ---" : $"--- install FAILED (exit {res.ExitCode}) ---");
+            // First the safe-base. Runs with -SkipOverlay (see SafeBaseService): the
+            // loader's version.dll provides the offline banner, so the banner overlay is not dropped.
+            if (!_safeBaseInfo.Installed)
+            {
+                Log("--- install safe-base (a UAC prompt will appear) ---");
+                var res = await _safeBase.InstallAsync();
+                if (!res.Success)
+                {
+                    Log(res.TimedOut ? "--- safe-base install TIMEOUT ---" : $"--- safe-base install FAILED (exit {res.ExitCode}) ---");
+                    StatusText = "safe-base install failed - see the log.";
+                    return;
+                }
+                Log("--- safe-base OK ---");
+                RefreshSafeBaseState();
+            }
+            else
+            {
+                Log("--- safe-base already installed; refreshing the loader ---");
+            }
+
+            // Then the loader, fetched from a source's loader/ folder (never bundled).
+            var gameDir = ResolveGameDir();
+            if (string.IsNullOrWhiteSpace(gameDir))
+            {
+                StatusText = "could not find the game folder - set the game path in Settings.";
+                Log("[loader] blocked: no game exe resolved from the safe-base manifest");
+                return;
+            }
+
+            var src = PickLoaderSource();
+            if (src is null || _gitSource is null || _loader is null)
+            {
+                StatusText = "no enabled mod source to fetch the loader from.";
+                Log("[loader] blocked: no enabled source carries a loader/ folder");
+                return;
+            }
+
+            Log($"--- install mod loader from {src.Url} ---");
+            try
+            {
+                var snap = await _gitSource.FetchListingsAsync(src);
+                var progress = new Progress<string>(Log);
+                var res = await _loader.FetchAndInstallAsync(src, snap, gameDir!, SafeBaseService.ManifestPath, progress);
+                Log("[loader] " + res.Message);
+                StatusText = res.Ok ? "Mod loader + safe-base installed." : "loader install failed - see the log.";
+            }
+            catch (System.Exception ex)
+            {
+                Log("[loader] error: " + ex.Message);
+                StatusText = "loader install failed: " + ex.Message;
+            }
         }
         finally { IsBusy = false; RefreshSafeBaseState(); }
     }
+
 
     /// <summary>Revert every registered mod, then uninstall the safe-base (self-elevates).</summary>
     private async System.Threading.Tasks.Task UninstallAllAsync()
@@ -911,13 +998,36 @@ public sealed class MainViewModel : ObservableObject
     private void RefreshSafeBaseState()
     {
         _safeBaseInfo = _safeBase is null ? SafeBaseInfo.NotInstalled : _safeBase.Read();
+        // The loader lives in the game folder, so its state keys off the resolved game dir.
+        _loaderInfo = LoaderService.ReadInstalled(ResolveGameDir());
         RaiseSafeBaseProps();
         RaiseGameExeDisplay();
+    }
+
+    /// <summary>The game folder (<c>version.dll</c>'s home), or null when no live game exe is recorded.</summary>
+    private string? ResolveGameDir()
+    {
+        var exe = GameLauncher.ResolveGameExe(_config.GameExeOverride);
+        return string.IsNullOrWhiteSpace(exe) ? null : System.IO.Path.GetDirectoryName(exe);
+    }
+
+    /// <summary>
+    /// The source the loader is fetched from: the built-in launcher repo when it is still
+    /// enabled, otherwise the first enabled source. The loader always ships in a source's
+    /// <c>loader/</c> folder, so it is pulled from GitHub like the mods - never bundled.
+    /// </summary>
+    private ModSource? PickLoaderSource()
+    {
+        var def = _sources.FindByKey(SourceRegistry.MakeDefaultSource().Key);
+        if (def is not null && def.Enabled) return def;
+        return _sources.Sources.FirstOrDefault(s => s.Enabled);
     }
 
     private void RaiseSafeBaseProps()
     {
         OnPropertyChanged(nameof(SafeBaseInstalled));
+        OnPropertyChanged(nameof(LoaderInstalled));
+        OnPropertyChanged(nameof(LoaderSummary));
         OnPropertyChanged(nameof(FirstRunNeeded));
         OnPropertyChanged(nameof(SafeBaseSummary));
         InstallSafeBaseCommand.RefreshCanExecute();
@@ -967,7 +1077,7 @@ public sealed class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(PythonPath));
         Log("[python] " + PythonHealth.Describe(result));
 
-        // Guide the user the first time we discover there is no usable runtime (L7).
+        // Guide the user the first time we discover there is no usable runtime.
         if (!result.ReadyForApply && !_pythonPromptShown)
         {
             _pythonPromptShown = true;
@@ -991,7 +1101,7 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// L1 verification that the subprocess plumbing works end to end: run a trivial
+    /// Verification that the subprocess plumbing works end to end: run a trivial
     /// PowerShell one-liner through the real runner and watch it stream + report an
     /// exit code, without touching the game or the safe-base.
     /// </summary>
@@ -1016,7 +1126,7 @@ public sealed class MainViewModel : ObservableObject
 
     private void Log(string line) => AppendLog(line);
 
-    // ---- Mod-sources (2a R4/R5): command bodies ----
+    // ---- Mod sources: command bodies ----
 
     private void RebuildSourcesList()
     {
@@ -1113,7 +1223,7 @@ public sealed class MainViewModel : ObservableObject
             Url = NewSourceUrl.Trim(),
             RefName = (NewSourceRef ?? "").Trim(),
             Enabled = true,
-            Trusted = false,   // R5: prompt for INSTALL on first download
+            Trusted = false,   // untrusted by default: prompt for INSTALL on first download
         };
         _sources.Sources.Add(s);
         _sources.Normalize();
@@ -1146,7 +1256,7 @@ public sealed class MainViewModel : ObservableObject
         if (row.HasManifestError) { Log($"[install] refused: {row.Entry.ManifestError}"); return; }
         if (row.CollidesWithBuiltIn) { Log($"[install] refused: '{row.Id}' is a built-in mod"); return; }
 
-        // R5: trust gate for untrusted (third-party) sources.
+        // trust gate for untrusted (third-party) sources.
         if (!src.Trusted && RequestTrustApproval is not null)
         {
             var ok = await RequestTrustApproval(src, row.Entry);
@@ -1195,7 +1305,7 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 2b: the two non-critical startup services, run after the first scan so they
+    /// the two non-critical startup services, run after the first scan so they
     /// never delay the window. Started from the UI thread and awaited WITHOUT
     /// ConfigureAwait(false), so the update properties and the What's-new seam all
     /// land back on the dispatcher. Failures are logged, never thrown.
@@ -1228,7 +1338,7 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 2b: show the "What's new" panel the first time a given app version runs. Marks
+    /// show the "What's new" panel the first time a given app version runs. Marks
     /// the version seen once notes are retrieved (or the tag simply has no release),
     /// so it never repeats; a network failure leaves it unseen to retry next launch
     /// without ever spamming the user on the same successful run.
@@ -1270,7 +1380,7 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 2b: build the diagnostics zip (settings + state + configs + remote manifests +
+    /// build the diagnostics zip (settings + state + configs + remote manifests +
     /// a generated about.txt, never any game file) and open the folder it landed in.
     /// </summary>
     private async System.Threading.Tasks.Task ExportDiagnosticsAsync()
@@ -1300,7 +1410,8 @@ public sealed class MainViewModel : ObservableObject
         sb.AppendLine("os: " + System.Environment.OSVersion.VersionString + " (" + (System.Environment.Is64BitOperatingSystem ? "x64" : "x86") + ")");
         sb.AppendLine("content root: " + (_locator.Root ?? "(not located)"));
         sb.AppendLine("engine root: " + (_locator.EngineRoot ?? "(not located)"));
-        sb.AppendLine("safe-base: " + (_safeBaseInfo.Installed ? $"installed ({_safeBaseInfo.Milestone})" : "NOT installed"));
+        sb.AppendLine("safe-base: " + (_safeBaseInfo.Installed ? $"installed - game: {(_safeBaseInfo.GameExe ?? "(unknown)")}" : "NOT installed"));
+        sb.AppendLine("mod loader: " + (_loaderInfo.Installed ? $"installed (v{_loaderInfo.Version})" : "NOT installed"));
         sb.AppendLine("python: " + PythonStatusText);
         sb.AppendLine();
         sb.AppendLine("mod sources:");
@@ -1330,7 +1441,7 @@ public sealed class MainViewModel : ObservableObject
     private static string Short(string sha) => string.IsNullOrEmpty(sha) ? "" : sha[..System.Math.Min(7, sha.Length)];
 
     /// <summary>
-    /// Mod-sources (2a): enumerate every source that currently has an installed mod
+    /// Mod sources: enumerate every source that currently has an installed mod
     /// under <c>remote-mods/&lt;key&gt;/</c> so CompositeModDiscovery can pick up the tree
     /// with proper URLs. Sources with no installed folder are skipped here (they
     /// still appear in the Browse tab, just not in the Mods list).

@@ -13,7 +13,7 @@ namespace LeafItAlone.Launcher.ViewModels;
 /// does not mention), maps each described field to a <see cref="ConfigFieldEditor"/>,
 /// re-evaluates <c>when</c> visibility as values change, and writes back only the
 /// described keys. "Pending" = the live file's sha differs from the sha recorded at
-/// the last apply (set by L3); L2 surfaces it via the badge.
+/// the last apply; the difference is surfaced via the badge.
 /// </summary>
 public sealed class ConfigEditorViewModel : ObservableObject
 {
@@ -46,7 +46,7 @@ public sealed class ConfigEditorViewModel : ObservableObject
     private string _info = "";
     public string Info { get => _info; set => Set(ref _info, value); }
 
-    /// <summary>The mod's enable toggle (L3/L4 drive apply/revert from this).</summary>
+    /// <summary>The mod's enable toggle (drive apply/revert from this).</summary>
     public bool Enabled
     {
         get => _enabled;
@@ -56,17 +56,30 @@ public sealed class ConfigEditorViewModel : ObservableObject
 
     /// <summary>
     /// Pending = the state on disk differs from what is currently applied to the
-    /// game, so an Apply/Revert would change something. Two cases (plan: "enabled
+    /// game, so an Apply/Revert would change something. Two cases ("enabled
     /// state changed OR live-config sha != lastAppliedConfigSha"):
     ///  * enabled  - pending when the config's sha differs from the applied sha
     ///               (edited since the last apply, or never applied: applied is empty).
     ///  * disabled - pending when an applied sha exists (it's live in the game but
     ///               the user has switched it off, so a revert is owed).
     /// </summary>
-    public bool IsPending => Enabled ? _currentSha != _lastAppliedSha : _lastAppliedSha.Length > 0;
+    public bool IsPending => Mod.IsCodeMod
+        // A code mod has no live config to diff; the only thing that can be out of sync is
+        // the enabled toggle versus whether its folder is currently installed in the game.
+        ? Enabled != IsApplied
+        : Enabled ? _currentSha != _lastAppliedSha : _lastAppliedSha.Length > 0;
 
     /// <summary>True when the mod is currently applied in the game (a revert is possible).</summary>
     public bool IsApplied => _lastAppliedSha.Length > 0;
+
+    /// <summary>Kind badges for the list: a code mod (loader-hosted DLL) versus a data mod (script-patched).</summary>
+    public bool IsCode => Mod.IsCodeMod;
+    public bool IsDataBased => Mod.IsDataMod;
+
+    /// <summary>One-line kind description for the Details pane.</summary>
+    public string KindLabel => Mod.IsCodeMod
+        ? "Code mod - the loader hosts its DLL from the game's Mods folder; toggling installs or removes it (takes effect next launch)."
+        : "Data-based mod - patches the game's files through its apply/revert scripts when you Apply.";
 
     /// <summary>Seed from launcher state, then re-evaluate pending.</summary>
     public void ApplyState(ModState state)
@@ -177,17 +190,17 @@ public sealed class ConfigEditorViewModel : ObservableObject
         OnPropertyChanged(nameof(IsApplied));
     }
 
-    /// <summary>Snapshot used to reconcile state.json after a successful apply (L3/L4).</summary>
+    /// <summary>Snapshot used to reconcile state.json after a successful apply.</summary>
     public string CurrentConfigSha => _currentSha;
 
-    /// <summary>After L3 applies cleanly the caller records the applied sha; clear pending.</summary>
+    /// <summary>After a clean apply the caller records the applied sha; clear pending.</summary>
     public void MarkApplied(string appliedSha)
     {
         _lastAppliedSha = appliedSha;
         RaisePending();
     }
 
-    /// <summary>After L3 reverts cleanly there is nothing applied; the pending badge
+    /// <summary>After a clean revert there is nothing applied; the pending badge
     /// then reflects the disabled state (an empty applied sha is not "owed").</summary>
     public void MarkReverted() => MarkApplied("");
 }

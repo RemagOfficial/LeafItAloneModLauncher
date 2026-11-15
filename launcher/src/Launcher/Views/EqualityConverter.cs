@@ -5,7 +5,7 @@ using System.Windows.Data;
 namespace LeafItAlone.Launcher.Views;
 
 /// <summary>
-/// One-way "does the bound value equal the parameter?" test used by the L9 Settings
+/// One-way "does the bound value equal the parameter?" test used by the Settings
 /// segmented controls: each theme/accent option binds its <c>IsChecked</c> through this
 /// and fires a Command on click, so the selection reflects the VM string without the VM
 /// needing a boolean per option. <see cref="ConvertBack"/> is intentionally unsupported -

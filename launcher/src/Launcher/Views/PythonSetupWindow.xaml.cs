@@ -7,7 +7,7 @@ using System.Windows.Navigation;
 namespace LeafItAlone.Launcher.Views;
 
 /// <summary>
-/// The L7 guidance popup shown when no usable Python + UnityPy runtime is detected.
+/// The guidance popup shown when no usable Python + UnityPy runtime is detected.
 /// It is intentionally a leaf: it only points the user at the pinned interpreter and the
 /// one-time pip install, and offers a Re-check that re-runs the launcher's probe without a
 /// restart. All data comes in through the constructor so the window stays independent of the VM.

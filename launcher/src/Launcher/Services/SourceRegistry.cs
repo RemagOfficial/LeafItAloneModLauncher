@@ -27,7 +27,7 @@ public sealed class ModSource
 
     /// <summary>
     /// False for user-added third-party sources: installing from them shows the
-    /// "type INSTALL to run scripts from this repo" modal (plan R5). True for
+    /// "type INSTALL to run scripts from this repo" modal. True for
     /// the built-in launcher repo and for anything the user has explicitly
     /// marked trusted after seeing the warning once.
     /// </summary>
@@ -117,7 +117,7 @@ public sealed class SourceRegistry
 
     /// <summary>
     /// When false, the launcher refuses to add new sources and Browse shows only the
-    /// default one (plan R5: safe-by-default). Persisted in <see cref="AppConfig"/>,
+    /// default one. Persisted in <see cref="AppConfig"/>,
     /// kept here as a static helper so callers can consult the same token.
     /// </summary>
     public static string DefaultPath()

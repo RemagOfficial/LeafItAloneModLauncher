@@ -21,7 +21,7 @@ public sealed record GitHubEntry(
     long Size,
     string? DownloadUrl);
 
-/// <summary>One GitHub release, normalised to the fields the UI needs (2b self-update / What's new).</summary>
+/// <summary>One GitHub release, normalised to the fields the UI needs.</summary>
 public sealed record ReleaseInfo(string Tag, string Url, string Body);
 
 /// <summary>Rate-limit snapshot read from response headers. All zeros when GitHub omits them.</summary>
@@ -34,7 +34,7 @@ public sealed record RateLimitState(int Remaining, DateTimeOffset ResetUtc)
 }
 
 /// <summary>
-/// Thin GitHub REST API client (mod-sources 2a R2). Uses the framework
+/// Thin GitHub REST API client (Mod sources). Uses the framework
 /// <see cref="HttpClient"/> only, so the launcher still builds fully offline
 /// against the base class library. Unauthenticated by design - the request
 /// budget (~60/hr) is more than enough for a handful of mods and refreshes
@@ -156,7 +156,7 @@ public sealed class GitHubApi : IDisposable
     }
 
     /// <summary>
-    /// 2b: the repo's most recent published release (<c>releases/latest</c>), used by
+    /// the repo's most recent published release (<c>releases/latest</c>), used by
     /// the self-update check. GitHub returns 404 for a repo with no releases; that is
     /// surfaced as a <c>null</c> rather than an exception so startup stays silent.
     /// </summary>
@@ -167,7 +167,7 @@ public sealed class GitHubApi : IDisposable
     }
 
     /// <summary>
-    /// 2b: the release carrying a specific tag (<c>releases/tags/{tag}</c>), used to
+    /// the release carrying a specific tag (<c>releases/tags/{tag}</c>), used to
     /// show "What's new" for the version actually installed. A missing tag returns
     /// <c>null</c> (GitHub 404), never a throw.
     /// </summary>

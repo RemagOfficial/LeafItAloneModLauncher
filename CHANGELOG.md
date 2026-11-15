@@ -3,6 +3,34 @@
 Notable changes across this monorepo. Each sub-project also has its own
 release notes inside its README.
 
+## 1.2.0 (2026-11-15)
+Third release: the launcher now installs the real mod loader and hosts code mods,
+and the Mods list reflects only what you have actually installed.
+- **Install loader + safe-base in one action.** The Dashboard's install step runs
+  the safe-base with `-SkipOverlay` (so it no longer drops the banner-only
+  `version.dll`) and then fetches the mod loader - `version.dll`, `LiaLoader.dll`,
+  `LiaLoader.Api.dll` - from the source repo's `loader/` folder into the game, and
+  records the overlay hash in the manifest so content mods' preconditions pass.
+  The loader is always pulled from the same repo the mods come from.
+- **Code mods.** Mods are now a "kind": data mods ship `apply`/`revert` scripts;
+  code mods declare a `dll` the loader hosts. Enabling a code mod copies its folder
+  into `<GameDir>\Mods\<id>\` and disabling removes it, taking effect on the next
+  launch (the loader discovers `Mods\` at boot). Code mods need no Python; the game
+  must be closed so the loader isn't holding the DLLs. First shipped code mod:
+  `blower-suction-all-maps` (Leaf Blower suction on every map but Sakura).
+- **Mods list shows installed mods only.** Built-in `content-mods/` are no longer
+  auto-listed as if installed - that folder is the source repo's catalog, brought in
+  through **Browse -> Install** on demand. The empty state now points at Browse.
+- **Mod-kind badges.** The Installed list and Browse rows show a `data-based` or
+  `code` chip so the two kinds read clearly before and after install.
+- **Loader published to the source repo** as a repo-root `loader/` folder with a
+  `loader.json` manifest and the three loader DLLs (v1.2.0).
+- **safe-base:** `Restore-ModFiles` now refuses to restore a pre-update backup over a
+  file a *game update* (not the mod) changed, so a revert can never silently
+  downgrade the game; `-Force` overrides.
+- Housekeeping: removed internal plan/step labels from the launcher's UI, docs, code
+  comments and headless checks.
+
 ## 1.1.0 (2026-11-07)
 Second release: the whole safe-base framework, the launcher, four content mods and
 GitHub-sourced mod installation. (v1.0.0 shipped only the `overlay/` example; the

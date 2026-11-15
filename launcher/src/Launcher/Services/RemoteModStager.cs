@@ -16,7 +16,7 @@ public sealed record StagerResult(bool Ok, string Message, int FilesWritten, int
 }
 
 /// <summary>
-/// Mod-sources (2a R3): copies a remote mod into <c>remote-mods/&lt;sourceKey&gt;/&lt;id&gt;/</c>,
+/// Mod sources: copies a remote mod into <c>remote-mods/&lt;sourceKey&gt;/&lt;id&gt;/</c>,
 /// records the per-file SHA manifest into <see cref="LauncherState"/>, and heals
 /// missing/mismatched files before Apply runs. There is deliberately no Uninstall -
 /// mods are tiny and users delete them by hand if they want.
@@ -213,7 +213,7 @@ public sealed class RemoteModStager
     /// <summary>
     /// Rebuild the in-repo path (e.g. <c>content-mods/my-mod/apply.ps1</c>) from the
     /// recorded <see cref="RemoteState.FolderPathInRepo"/>. Falls back to a plain
-    /// <c>content-mods/&lt;modId&gt;/&lt;rel&gt;</c> if the field is missing (pre-R3 state).
+    /// <c>content-mods/&lt;modId&gt;/&lt;rel&gt;</c> if the field is missing (earlier state).
     /// </summary>
     private static string RepoJoin(RemoteState remote, string modIdHint, string rel)
     {

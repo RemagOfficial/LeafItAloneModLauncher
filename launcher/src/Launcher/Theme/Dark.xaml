@@ -2,7 +2,7 @@
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <!--
-        L9 dark palette. Same key set as Light.xaml (parity is asserted headless); only
+        Dark palette. Same key set as Light.xaml (parity is asserted headless); only
         the values differ, which is what makes the swap safe. The console keeps a dark
         ground in both themes, so the fixed LogLineBrushConverter colors stay legible -
         but ConsoleBgBrush here is a touch deeper to sit into the dark window.

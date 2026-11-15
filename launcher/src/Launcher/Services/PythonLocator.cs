@@ -8,7 +8,7 @@ namespace LeafItAlone.Launcher.Services;
 /// machines), then the stock <c>C:\Python312\python.exe</c> the toolchain is pinned to. It
 /// only locates a file - existence is NOT validity. <see cref="PythonHealth"/> then probes the
 /// found interpreter for "is 3.12 AND UnityPy importable"; if that fails the launcher guides
-/// the user to install it (L7 chose detect-and-guide over bundling a runtime). A path from an
+/// the user to install it. A path from an
 /// embedded <c>runtime/py</c> is still honoured first if someone drops one in, but we ship none.
 /// </summary>
 public static class PythonLocator

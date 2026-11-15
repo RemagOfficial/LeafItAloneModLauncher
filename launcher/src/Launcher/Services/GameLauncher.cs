@@ -31,7 +31,7 @@ public static class GameLauncher
     public static string? ResolveGameExe() => ResolveGameExeFrom(ManifestPath);
 
     /// <summary>
-    /// L9: a user override wins when it names a file that exists; otherwise fall back to
+    /// a user override wins when it names a file that exists; otherwise fall back to
     /// the safe-base manifest. So a stale/deleted override never blocks launching - it just
     /// reverts to the normal source of truth.
     /// </summary>
@@ -62,7 +62,7 @@ public static class GameLauncher
     }
 
     /// <summary>
-    /// Launch the game. An optional user <paramref name="exeOverride"/> (L9 Settings) wins
+    /// Launch the game. An optional user <paramref name="exeOverride"/> wins
     /// when it exists; otherwise the safe-base manifest's <c>gameExe</c> is used. Returns a
     /// (success, human message) pair for the status bar and log. Never throws.
     /// </summary>

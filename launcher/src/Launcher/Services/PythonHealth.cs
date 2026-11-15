@@ -8,8 +8,8 @@ namespace LeafItAlone.Launcher.Services;
 /// <summary>
 /// How good the resolved Python interpreter actually is. A file existing is not
 /// enough: <c>apply.ps1</c> runs the UnityPy patcher under it, so a usable runtime
-/// means the interpreter AND an importable <c>UnityPy</c>. We do not embed a Python
-/// (L7 decision); when this is anything but <see cref="PythonStatus.Ok"/> we guide the
+/// means the interpreter AND an importable <c>UnityPy</c>. We do not embed a Python -
+/// when this is anything but <see cref="PythonStatus.Ok"/> we guide the
 /// user to install the pinned interpreter themselves.
 /// </summary>
 public enum PythonStatus

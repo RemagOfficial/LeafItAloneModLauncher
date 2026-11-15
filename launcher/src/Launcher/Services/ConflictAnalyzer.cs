@@ -5,7 +5,7 @@ using LeafItAlone.Launcher.Models;
 namespace LeafItAlone.Launcher.Services;
 
 /// <summary>
-/// 2b mod conflict detection. Given the set of enabled mods, it looks at the
+/// mod conflict detection. Given the set of enabled mods, it looks at the
 /// <c>patches[]</c> each author declared and reports every engine target that two
 /// or more of them rewrite. The comparison key is the normalised
 /// <c>(bundle, asset, field)</c> triple on <see cref="PatchTarget"/>, so a genuine

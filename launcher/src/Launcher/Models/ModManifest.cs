@@ -5,7 +5,7 @@ using System.Text.Json.Serialization;
 namespace LeafItAlone.Launcher.Models;
 
 /// <summary>
-/// A mod's <c>content-mods/&lt;id&gt;/mod.json</c> manifest (plan "Data model").
+/// A mod's <c>content-mods/&lt;id&gt;/mod.json</c> manifest.
 /// This is the whole contract between a mod and the launcher: it names the mod,
 /// declares the config editor schema, tells the launcher how to apply/revert it
 /// (by shelling out to the existing validated scripts), and lists its runtime
@@ -28,6 +28,15 @@ public sealed class ModManifest
     [JsonPropertyName("order")] public int Order { get; set; }
 
     /// <summary>
+    /// Present on a CODE mod: the managed DLL the loader hosts from the game's
+    /// <c>Mods/&lt;id&gt;/</c> folder (e.g. <c>MyMod.dll</c>). A manifest with a
+    /// <c>dll</c> is a code mod and needs no apply/revert scripts; one without is a
+    /// data mod that patches the game through its apply/revert scripts. The launcher
+    /// keys the code-vs-data distinction (and the list badge) off this field.
+    /// </summary>
+    [JsonPropertyName("dll")] public string Dll { get; set; } = "";
+
+    /// <summary>
     /// The live value store, e.g. <c>%LOCALAPPDATA%\LeafItAloneSafe\bag-capacity.json</c>.
     /// Tokens (<c>%LOCALAPPDATA%</c> etc.) are expanded by <see cref="Services.EnvPaths"/>.
     /// The manifest only <em>describes</em> this file; the launcher preserves any keys
@@ -43,19 +52,19 @@ public sealed class ModManifest
     [JsonPropertyName("requires")] public Requires Requires { get; set; } = new();
 
     /// <summary>
-    /// 2b conflict detection: the engine assets this mod rewrites, declared by the
+    /// conflict detection: the engine assets this mod rewrites, declared by the
     /// author so the launcher can warn before a risky combine. Each entry is a
     /// <see cref="PatchTarget"/> triple <c>(bundle, asset, field)</c>. Two enabled
     /// mods that name the <em>same</em> triple collide ("last-applied wins"); a
     /// different <c>field</c> on the same actor/bundle does NOT (so bag-capacity and
     /// faster-bag-tying, both touching the bag actors but different fields, are
     /// correctly independent). Empty means "undeclared" — the mod simply never
-    /// participates in a conflict warning, exactly like pre-2b manifests.
+    /// participates in a conflict warning, exactly like earlier manifests.
     /// </summary>
     [JsonPropertyName("patches")] public List<PatchTarget> Patches { get; set; } = new();
 
     /// <summary>
-    /// Mod-sources (2a R1): optional provenance fields. Third-party mod authors ship
+    /// Mod sources: optional provenance fields. Third-party mod authors ship
     /// these in their <c>mod.json</c> so the launcher can show a compat hint when the
     /// mod is listed from a source repo. They never block install; the launcher only
     /// reads them for UI and for the trust modal. Empty string means "unspecified",
@@ -70,7 +79,7 @@ public sealed class ModManifest
     [JsonPropertyName("gameVersion")] public string GameVersion { get; set; } = "";
 }
 
-/// <summary>The <c>config</c> block: a flat list of editor fields (plan "config: a tiny schema list").</summary>
+/// <summary>The <c>config</c> block: a flat list of editor fields.</summary>
 public sealed class ConfigSchema
 {
     [JsonPropertyName("fields")] public List<ConfigField> Fields { get; set; } = new();
@@ -133,7 +142,7 @@ public sealed class Requires
 }
 
 /// <summary>
-/// 2b: one declared patch target — a coarse, human-readable pointer at an engine
+/// one declared patch target — a coarse, human-readable pointer at an engine
 /// asset the mod rewrites. All parts are optional strings so a mod can be as
 /// specific as it likes (a full <c>bundle/asset/field</c>) or leave a part blank
 /// when it does not apply (e.g. a whole-bundle swap has no single <c>field</c>).

@@ -6,7 +6,7 @@ using System.Linq;
 namespace LeafItAlone.Launcher.Services;
 
 /// <summary>
-/// 2b: turns <see cref="Markdown"/> blocks into a themed WPF <see cref="System.Windows.Documents.FlowDocument"/>
+/// turns <see cref="Markdown"/> blocks into a themed WPF <see cref="System.Windows.Documents.FlowDocument"/>
 /// for the "What's new" panel. Colours and the UI font are wired by DynamicResource key so
 /// the notes follow the active Light/Dark theme and accent exactly like the rest of the app.
 /// Links open in the default browser via shell-execute (never in-app). All WPF types are

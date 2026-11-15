@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 namespace LeafItAlone.Launcher.Services;
 
 /// <summary>
-/// 2b: a tiny, dependency-free GitHub-flavoured Markdown <em>parser</em> used by the
+/// a tiny, dependency-free GitHub-flavoured Markdown <em>parser</em> used by the
 /// "What's new" panel. The app ships no NuGet packages (offline build), so rather than
 /// pull in Markdig we recognise the handful of constructs release notes actually use:
 /// ATX headings, unordered + ordered lists, blockquotes, fenced and inline code,

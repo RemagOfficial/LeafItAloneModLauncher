@@ -2,7 +2,7 @@
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <!--
-        L9 design system. All colors come from the active theme dictionary by
+        Design system. All colors come from the active theme dictionary by
         DynamicResource so a runtime palette swap re-skins everything. Styles that
         only read tokens (fonts, radii) are static. Controls.xaml is merged FIRST in
         App.xaml so its implicit styles see the palette keys defined after it.

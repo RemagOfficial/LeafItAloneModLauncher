@@ -5,7 +5,7 @@
              StartupUri="MainWindow.xaml">
     <Application.Resources>
         <!--
-            L9 design system, merged in load order: Controls (styles, which read the
+            Design system, merged in load order: Controls (styles, which read the
             palette keys by DynamicResource) then the light palette as the startup
             fallback. App.xaml.cs swaps the palette for the saved theme/accent before the
             window opens, so this default only shows for a fraction of a second.

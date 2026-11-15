@@ -6,7 +6,7 @@ using System.Windows.Media;
 namespace LeafItAlone.Launcher.Services;
 
 /// <summary>
-/// Owns the live light/dark + accent swap (L9) entirely in code, with no third-party
+/// Owns the live light/dark + accent swap entirely in code, with no third-party
 /// theme package (the offline constraint). Every style in <c>Theme/Controls.xaml</c>
 /// references its brushes by <c>DynamicResource</c>, so replacing the merged palette
 /// dictionaries at runtime re-skins the whole UI immediately - no restart, no window

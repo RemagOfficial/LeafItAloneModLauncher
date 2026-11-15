@@ -15,8 +15,8 @@ namespace LeafItAlone.Launcher.Services;
 ///    engine scripts under <c>tools/</c> (a copy of safe-base). BaseDirectory then
 ///    already satisfies the marker check.
 ///
-/// For L1 discovery only the <see cref="ModsRoot"/> matters; the engine dir is
-/// wired up in L3+. A null result is reported via <see cref="LastError"/> so the
+/// For mod discovery only the <see cref="ModsRoot"/> matters; the engine dir is
+/// wired up later. A null result is reported via <see cref="LastError"/> so the
 /// UI can tell the user what to fix instead of crashing on a bare NRE.
 /// </summary>
 public sealed class RepoLocator
@@ -30,7 +30,7 @@ public sealed class RepoLocator
     public string? LastError { get; private set; }
 
     /// <summary>
-    /// Mod-sources (2a R3): the per-user tree where installed remote mods live.
+    /// Mod sources: the per-user tree where installed remote mods live.
     /// Independent of the app root because it must survive launcher upgrades and
     /// not require writing into Program Files. Auto-created on first use so a
     /// fresh install just works; layout is <c>remote-mods/&lt;sourceKey&gt;/&lt;modId&gt;/</c>.

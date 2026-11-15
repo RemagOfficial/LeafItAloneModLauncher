@@ -3,7 +3,7 @@ using System.Collections.ObjectModel;
 namespace LeafItAlone.Launcher.ViewModels;
 
 /// <summary>
-/// Mod-sources (2a R4): one row in the Settings -> "Mod sources" list. Wraps a
+/// Mod sources: one row in the Settings -> "Mod sources" list. Wraps a
 /// <see cref="Services.ModSource"/> for data-binding but keeps the underlying
 /// registry object as the single source of truth (Save still writes through the
 /// registry so an edit that fails validation doesn't half-persist).
@@ -66,6 +66,10 @@ public sealed class BrowseItem : ObservableObject
 
     /// <summary>True when the mod's manifest failed to parse; row shows an error but disables install.</summary>
     public bool HasManifestError => Entry.ManifestError is not null;
+
+    /// <summary>Kind badges: a code mod (loader-hosted DLL) versus a data mod (script-patched).</summary>
+    public bool IsCodeMod => Entry.IsCodeMod;
+    public bool IsDataBased => !Entry.IsCodeMod;
 
     public string StatusBadge
     {

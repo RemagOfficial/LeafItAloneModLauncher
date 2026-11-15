@@ -13,7 +13,7 @@ namespace LeafItAlone.Launcher.Services;
 /// manifest, e.g. <c>%LOCALAPPDATA%\LeafItAloneSafe\bag-capacity.json</c>).
 ///
 /// <para>
-/// Two hard rules from the plan (L2):
+/// Two hard rules from the design:
 ///  * <b>Preserve unknown keys.</b> The manifest only <em>describes</em> the keys
 ///    the launcher edits; everything else (<c>_comment</c>, <c>_mode_notes</c>,
 ///    <c>_applyHelper</c>, …) must survive a round trip untouched, because

@@ -2,7 +2,7 @@
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <!--
-        L9 light palette. These are the ONLY raw colors in the app; every style in
+        Light palette. These are the ONLY raw colors in the app; every style in
         Controls.xaml binds to these keys by DynamicResource, so ThemeManager can swap
         this whole dictionary for Dark.xaml at runtime and nothing else changes. The
         AccentBrush / hover / pressed / on-accent entries are sane fallbacks - the

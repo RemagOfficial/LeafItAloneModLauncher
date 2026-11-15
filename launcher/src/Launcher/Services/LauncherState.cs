@@ -11,14 +11,14 @@ public sealed class ModState
 {
     [JsonPropertyName("enabled")] public bool Enabled { get; set; }
 
-    /// <summary>SHA of the live config the last time this mod was applied (L3 records it).</summary>
+    /// <summary>SHA of the live config the last time this mod was applied.</summary>
     [JsonPropertyName("lastAppliedConfigSha")] public string LastAppliedConfigSha { get; set; } = "";
 
     /// <summary>Mod version recorded at last successful apply.</summary>
     [JsonPropertyName("appliedVersion")] public string AppliedVersion { get; set; } = "";
 
     /// <summary>
-    /// Mod-sources (2a R3): provenance + self-healing manifest for a mod installed
+    /// Mod sources: provenance + self-healing manifest for a mod installed
     /// from a remote source. Null (or missing JSON key) for built-in mods shipped in
     /// <c>content-mods/</c>. When present, Apply must call
     /// <see cref="RemoteModStager.EnsurePresentAsync"/> first so any files the user
@@ -67,10 +67,10 @@ public sealed class RemoteState
 
 /// <summary>
 /// <c>%LOCALAPPDATA%\LeafItAloneSafe\launcher\state.json</c>: the launcher's own
-/// state, keyed by mod id (plan "New launcher/state.json"). It never touches the
+/// state, keyed by mod id. It never touches the
 /// mod config values — it only remembers what's enabled and which config hash was
 /// last applied, so "pending" = enabled-state changed OR live-config sha !=
-/// lastAppliedConfigSha. Apply (L3/L4) writes the sha; L2 only reads it to drive
+/// lastAppliedConfigSha. Apply writes the sha; the editor only reads it to drive
 /// the badge.
 /// </summary>
 public sealed class LauncherState

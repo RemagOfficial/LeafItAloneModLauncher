@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    L1 headless verification (plan "Test plan": a runner/unit test with no game).
+    Headless verification: a runner/unit test with no game.
     A console harness, not part of the shipped app: it drives RepoLocator +
     ModDiscovery against the real repo layout and asserts the bag-capacity
     manifest round-trips into the model. Run: dotnet run -project tests/HeadlessChecks

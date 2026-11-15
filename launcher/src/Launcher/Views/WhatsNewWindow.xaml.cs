@@ -4,7 +4,7 @@ using LeafItAlone.Launcher.Services;
 namespace LeafItAlone.Launcher.Views;
 
 /// <summary>
-/// 2b: the first-run-per-version "What's new" dialog. It shows the GitHub release notes
+/// the first-run-per-version "What's new" dialog. It shows the GitHub release notes
 /// for the version the user just launched, rendered from markdown into a themed
 /// FlowDocument (see <see cref="MarkdownRenderer"/>) - so headings, lists, links and
 /// code read as formatted text instead of raw symbols. Raised once per app version by

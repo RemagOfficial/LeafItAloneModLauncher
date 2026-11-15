@@ -6,7 +6,7 @@ namespace LeafItAlone.Launcher.Models;
 /// <summary>
 /// A discovered mod: its parsed <see cref="Manifest"/> plus the absolute folder it
 /// was found in. Wraps a few convenience paths the apply/revert orchestration
-/// (L3) and config editor (L2) will need. Read-only for L1.
+/// and config editor need. The view itself is read-only.
 /// </summary>
 public sealed class ModInfo
 {
@@ -18,7 +18,7 @@ public sealed class ModInfo
     }
 
     /// <summary>
-    /// Mod-sources (2a R3): set by <see cref="Services.CompositeModDiscovery"/> when the mod
+    /// Mod sources: set by <see cref="Services.CompositeModDiscovery"/> when the mod
     /// came from a folder under <c>remote-mods/&lt;sourceKey&gt;/&lt;id&gt;</c>.
     /// Built-in mods leave these null/empty. The badge on the Mods page and the
     /// self-healing path in <see cref="Services.RemoteModStager"/> both key off them.
@@ -33,6 +33,17 @@ public sealed class ModInfo
 
     /// <summary>True when this mod was installed from a remote source (not shipped in <c>content-mods/</c>).</summary>
     public bool IsRemote => !string.IsNullOrEmpty(SourceKey);
+
+    /// <summary>
+    /// True when the mod is a CODE mod: its manifest declares a <c>dll</c> the loader hosts
+    /// from the game's <c>Mods/&lt;id&gt;/</c> folder. Enabling one copies that folder into the
+    /// game; there are no apply/revert scripts. Everything else is a DATA mod that patches
+    /// the game through its scripts.
+    /// </summary>
+    public bool IsCodeMod => !string.IsNullOrWhiteSpace(Manifest.Dll);
+
+    /// <summary>The complement of <see cref="IsCodeMod"/> - a script-patched data mod.</summary>
+    public bool IsDataMod => !IsCodeMod;
 
     public ModManifest Manifest { get; }
 
@@ -55,7 +66,7 @@ public sealed class ModInfo
     /// <summary>Absolute revert script, resolved against the mod folder.</summary>
     public string RevertScript => Path.Combine(Folder, Manifest.Revert.Script);
 
-    /// <summary>Human-readable list of the preconditions the launcher will assert (L3).</summary>
+    /// <summary>Human-readable list of the preconditions the launcher will assert.</summary>
     public string RequiresSummary
     {
         get

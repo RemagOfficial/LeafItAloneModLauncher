@@ -4,7 +4,7 @@ using System.Reflection;
 namespace LeafItAlone.Launcher.Services;
 
 /// <summary>
-/// 2b: the launcher's own identity — the single place the app version and its
+/// the launcher's own identity — the single place the app version and its
 /// GitHub repo slug are read from. The version comes from the assembly (set by
 /// <c>&lt;Version&gt;</c> in the csproj), so the self-update check, the "What's
 /// new" gate and the Settings/about line all agree on one number instead of
