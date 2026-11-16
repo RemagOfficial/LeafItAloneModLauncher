@@ -1,0 +1,32 @@
+{
+  "id": "tiny-mode",
+  "name": "Tiny Mode",
+  "version": "1.1.0",
+  "author": "the loader's own repo",
+  "description": "Makes the player smaller and slows it down by the same factor, so the world reads as giant. Half size also means half walk speed. The size is set by an in-launcher slider from 0.10x to 0.50x (default 0.5x); values outside that range are still honored if you hand-edit the config file, so you can go tinier or even larger than the slider shows. It is built on the loader's method-detour capture surface: it arms pass-through hooks to find the live player (PlayerBehaviour.get_IsAwaitingSelection / get_IsCrouching) and its settings object (PlayerBehaviourSettings.get_MoveSpeed), then writes the player's Transform.localScale and scales the settings MoveSpeed field by the same factor. No keybind and no toggle: presence of the mod is 'on', deleting it is the only 'off'. Requires the loader build that registers those three hook anchors and dispatch-table rows; on an older version.dll the hooks refuse to arm and the game stays vanilla. Safe to delete - the player is left at the size and speed it was last set to.",
+  "order": 24,
+  "dll": "tiny-mode.dll",
+  "gameBuild": "26611978",
+
+  "scale": 0.5,
+
+  "configPath": "%LOCALAPPDATA%\\LeafItAloneSafe\\tiny-mode.json",
+  "config": {
+    "fields": [
+      {
+        "key": "scale",
+        "label": "Player scale",
+        "type": "float",
+        "min": 0.10,
+        "max": 0.50,
+        "step": 0.01,
+        "default": 0.5,
+        "help": "The player's size, and its walk speed scaled by the same factor. 0.5 = half size, half speed. The slider stops at 0.50 because that is the supported range; hand-edit tiny-mode.json to go smaller than 0.10 or larger than 0.50 and the mod will honor it. Movement and speed are only adjusted once you are inside a map."
+      }
+    ]
+  },
+
+  "debug": "1",
+
+  "_note": "The launcher writes the slider value to configPath (a %LOCALAPPDATA% sidecar); the mod reads scale from there first, then falls back to the top-level 'scale' in this file, then 0.5. Beyond-slider values survive - the mod clamps only to a sanity window (0.05..4.0), never to the slider bounds. Speed is not a separate knob: it is the game's own MoveSpeed times the chosen scale, field-poked at PlayerBehaviourSettings+0x24 (verified get_MoveSpeed body is movss xmm0,[rcx+24h]); a float return cannot be value-overridden on this loader, so we capture the settings receiver via a pass-through hook and write the field directly. gameBuild records the build this was harvested and verified against (26611978); methods are still resolved by identity at runtime, so nothing here is a baked token."
+}
