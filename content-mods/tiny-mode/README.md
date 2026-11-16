@@ -1,8 +1,9 @@
-# tiny-mode — Tiny player, slow player, giant world
+# tiny-mode — Tiny player, slow jumps, giant world
 
-Makes the player smaller and slows it down by the **same factor**, so the world
-reads as oversized: a half-size character that also walks at half speed makes the
-grass and paths feel enormous. This is a **code mod** — instead of patching asset
+Makes the player smaller and scales its **walk speed and jump height** by the
+**same factor**, so the world reads as oversized: a half-size character that also
+walks at half speed and leaps to half height makes the grass, paths and doorways
+feel enormous. This is a **code mod** — instead of patching asset
 bundles, it ships a small managed DLL that the mod **loader** hosts, and it drives
 the effect with runtime method detours owned by the loader.
 
@@ -17,8 +18,11 @@ it, press Save, and the value is written to your live config file at
 `%LOCALAPPDATA%\LeafItAloneSafe\tiny-mode.json`. The mod reads it on the next
 launch.
 
-- **Walk speed is tied to scale.** At 0.5x you move at half speed; the slider is
-  one knob, not two.
+- **Walk speed and jump height are tied to scale.** At 0.5x you move at half speed
+  and jump to half height; the slider is one knob, not three. (Jump *height* is
+  scaled linearly with size, which means the jump *impulse* is scaled by the square
+  root — half the launch speed is a quarter the raw height, so the game's ballistic
+  `h = v²/2g` lands you back at half height.)
 - **Beyond the slider is allowed.** The slider stops at the supported range, but
   any value in the config file is honored. Hand-edit `tiny-mode.json` to `0.08`
   for a truly tiny player, or `1.5` to grow, and it works with no rebuild. The
@@ -51,6 +55,16 @@ game thread's stub (`HookHandle.LastSelf`).
   whole zone.
   (An earlier theory — a settings instance behind `get_MoveSpeed` at `+0x24` — was disproved:
   poking it left walking at full speed.)
+- Jump: the jump impulse is `PlayerBehaviourSettings.jumpForce`, a plain float at
+  `PlayerBehaviourSettings+0x28` (vanilla 3.5). The per-player settings object hangs off
+  the player at `PlayerBehaviour+0x58` (the `+0xC0` field is the *global* `GameSettings`, a
+  different object). Both jump read sites — `TryJump` and `HandleJump` — consult that one
+  field, so a direct write lowers the jump with no `min()` race (unlike the old native
+  instruction-patch boost, which had to patch both sites). Because jump height is ballistic
+  (`h ~ v²`), the mod scales the impulse by `sqrt(scale)` so **height** scales by `scale`:
+  half size → 0.707x force → 0.5x height. Re-asserted every beat so a map reload is
+  immediately re-scaled. Verified live: writing 20.0 to `+0x28` made the player rocket
+  upward; 3.5 restored the normal jump.
 
 Both hooks always **pass through** — the mod never lies to a getter; it only
 writes a transform and a field. (`get_IsSprinting` was rejected as a capture point
@@ -66,6 +80,6 @@ because sprinting is locked behind progression and is never polled early.)
 ## Safety
 
 Safe to delete: the loader hosts the game without it, and `Mods\tiny-mode\` can be
-removed while the game is closed. No game files are modified — the scale and speed
-are runtime writes, and Unity does not reset them for you, so the player is left at
-the size and speed it was last set to.
+removed while the game is closed. No game files are modified — the scale, speed and
+jump force are runtime writes, and Unity does not reset them for you, so the player is
+left at the size, speed and jump it was last set to.
