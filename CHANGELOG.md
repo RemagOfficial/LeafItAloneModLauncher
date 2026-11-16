@@ -3,6 +3,18 @@
 Notable changes across this monorepo. Each sub-project also has its own
 release notes inside its README.
 
+## loader 1.2.1 (2026-11-16)
+Loader-only patch. The mod loader and the launcher now carry **separate version
+numbers** (the launcher stays 1.2.0; this bumps only `loader/loader.json` and
+`LIA_VERSION`), so shipping a loader fix no longer forces a launcher release.
+- Adds the `PlayerBehaviourSettings.get_MoveSpeed` hook anchor (token `0x060004B7`)
+  the `tiny-mode` v1.1.0 speed-tied-to-scale field-poke captures. A float getter is
+  capture-only (`PassThrough`); the speed change is applied by writing the backing
+  `+0x24` field, since a float return (`xmm0`) cannot be value-overridden on this loader.
+- The launcher's loader install is git-blob-SHA / content-hash driven, not gated on the
+  version string, so existing users pick the new `version.dll` up on their next
+  **Install loader** without a launcher update.
+
 ## 1.2.0 (2026-11-15)
 Third release: the launcher now installs the real mod loader and hosts code mods,
 and the Mods list reflects only what you have actually installed.
