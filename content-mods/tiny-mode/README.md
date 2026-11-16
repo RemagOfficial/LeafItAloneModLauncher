@@ -39,11 +39,20 @@ game thread's stub (`HookHandle.LastSelf`).
 
 - Scale: `PlayerBehaviour.get_IsAwaitingSelection` / `get_IsCrouching` give the
   player; the mod then hops `get_transform` → a direct `Transform.set_localScale`.
-- Speed: `PlayerBehaviourSettings.get_MoveSpeed` gives the settings object. That
-  getter is verified to be a plain field read (`movss xmm0,[rcx+24h]`), and the
-  mod writes the backing float at `+0x24` to `vanilla speed × scale`.
+- Speed: the mover (`PlayerBehaviour.HandleMovement`) computes the player's effective speed
+  from the player's **own** `moveSpeed` field at `PlayerBehaviour+0xF0` — not a float, but a
+  `CompoundFloat` (base value at `+0x10`, recomputed cache at `+0x48`). The mod reads that
+  object off the player it already captured, latches the vanilla base once, and every beat
+  writes `base × scale` to BOTH the base and the cache — the mover multiplies by the cache,
+  and the game recomputes it event-driven, so anything less loses the race and walking
+  creeps back to full speed. (Trade-off: while the mod is on, the game's own speed bonuses
+  like sprint are over-asserted; half size = half speed always holds.) Verified live:
+  holding the cache at 0.5 made a 3-second walk cross ~1.5 m where full speed crosses a
+  whole zone.
+  (An earlier theory — a settings instance behind `get_MoveSpeed` at `+0x24` — was disproved:
+  poking it left walking at full speed.)
 
-All three hooks always **pass through** — the mod never lies to a getter; it only
+Both hooks always **pass through** — the mod never lies to a getter; it only
 writes a transform and a field. (`get_IsSprinting` was rejected as a capture point
 because sprinting is locked behind progression and is never polled early.)
 
